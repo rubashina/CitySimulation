@@ -157,10 +157,12 @@ function syncSessionFromLocal(data) {
     if (!data) return;
     // Данные в localStorage храним как { session, phase, participants, teams }
     if (data.session) {
-        state.session = { ...state.session, ...data.session };
-        if (typeof data.phase === 'number') {
-            state.session.phase = data.phase;
-        }
+        // createdAt может быть строкой
+        const createdAt = data.session.createdAt ? new Date(data.session.createdAt) : state.session.createdAt;
+        // Игнорируем data.session.phase: фазу храним отдельным полем data.phase
+        const { phase, ...rest } = data.session;
+        state.session = { ...state.session, ...rest, createdAt };
+        if (typeof data.phase === 'number') state.session.phase = data.phase;
     }
     if (data.participants) {
         state.participants = Object.values(data.participants);
@@ -210,11 +212,12 @@ function subscribeToSession(sessionCode) {
     
     const sessionRef = firebaseDB.ref(`sessions/${sessionCode}`);
     
-    // Слушаем изменения сессии
-    sessionRef.on('value', (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-            syncSessionFromFirebase(data);
+    // Слушаем изменения метаданных сессии (БЕЗ фазы!)
+    // Фаза — единственный источник правды: sessions/{code}/phase
+    sessionRef.child('session').on('value', (snapshot) => {
+        const sessionData = snapshot.val();
+        if (sessionData) {
+            syncSessionDataFromFirebase(sessionData);
         }
     });
     
@@ -311,9 +314,10 @@ function subscribeToSession(sessionCode) {
     
     // Слушаем изменения фазы
     sessionRef.child('phase').on('value', (snapshot) => {
-        const phase = snapshot.val();
+        const raw = snapshot.val();
+        const phase = raw === null ? null : Number(raw);
         console.log('📍 Firebase: получена фаза', phase, 'текущая:', state.session.phase);
-        if (phase !== null && phase !== state.session.phase) {
+        if (phase !== null && !Number.isNaN(phase) && phase !== state.session.phase) {
             const oldPhase = state.session.phase;
             state.session.phase = phase;
             
@@ -322,12 +326,10 @@ function subscribeToSession(sessionCode) {
             // Обновляем UI
             updatePhaseUI();
             
-            // Обновляем UI для участника
+            // UI участника (дополнительно к updatePhaseUI, на случай если экран уже отрисован)
             if (!state.user.isModerator) {
-                updateEventBanner(phase);  // Обновляем баннер
-                renderParameters();         // Перерендерим ползунки
-                updateConfirmButton();      // Обновляем кнопку подтверждения
-                
+                renderParameters();    // ползунки
+                updateConfirmButton(); // кнопка
                 showNotification(`Фаза ${phase}: ${CONFIG.phases[phase]?.name}`, 'success');
             }
             
@@ -338,26 +340,19 @@ function subscribeToSession(sessionCode) {
     console.log(`📡 Подписка на сессию ${sessionCode}`);
 }
 
-// Синхронизация данных из Firebase
-function syncSessionFromFirebase(data) {
-    if (data.session) {
-        const oldPhase = state.session.phase;
-        state.session = { ...state.session, ...data.session };
-        
-        // Если фаза изменилась — обновляем UI
-        if (data.phase !== undefined && data.phase !== oldPhase) {
-            state.session.phase = data.phase;
-            updatePhaseUI();
-            renderParameters(); // Перерендерим ползунки
-        }
-    }
+// Синхронизация метаданных сессии из Firebase (без фазы)
+function syncSessionDataFromFirebase(sessionData) {
+    if (!sessionData) return;
     
-    // Обновляем фазу напрямую
-    if (data.phase !== undefined) {
-        state.session.phase = data.phase;
-        updatePhaseUI();
-        renderParameters();
-    }
+    // createdAt может быть строкой
+    const createdAt = sessionData.createdAt ? new Date(sessionData.createdAt) : state.session.createdAt;
+    
+    // Игнорируем sessionData.phase: фазу обрабатываем ТОЛЬКО из sessions/{code}/phase
+    const { phase, ...rest } = sessionData;
+    state.session = { ...state.session, ...rest, createdAt };
+    
+    // Обновляем заголовки/баннеры (фаза уже в state.session.phase)
+    updatePhaseUI();
 }
 
 // Сохранение сессии в Firebase
@@ -369,7 +364,6 @@ function saveSessionToFirebase() {
         const data = {
             session: {
                 name: state.session.name,
-                phase: state.session.phase,
                 isPaused: state.session.isPaused,
                 projectScale: state.session.projectScale,
                 budgetLevel: state.session.budgetLevel,
@@ -395,14 +389,16 @@ function saveSessionToFirebase() {
     const data = {
         session: {
             name: state.session.name,
-            phase: state.session.phase,
             isPaused: state.session.isPaused,
             projectScale: state.session.projectScale,
             budgetLevel: state.session.budgetLevel,
             budgetTotal: state.session.budgetTotal,
             createdAt: state.session.createdAt?.toISOString()
         },
-        phase: state.session.phase
+        // Фаза хранится отдельным полем (sessions/{code}/phase)
+        phase: state.session.phase,
+        // Удаляем устаревшее поле session/phase (иначе старые клиенты могут откатывать фазу)
+        'session/phase': null
     };
     
     console.log('💾 Сохраняю сессию в Firebase:', data);
@@ -925,31 +921,6 @@ function calculateCategoryValue(categoryId, parameters) {
     return value;
 }
 
-// Расчёт параметра D (конфликт интересов между командами)
-function calculateConflict() {
-    const activeTeams = getActiveTeams();
-    if (activeTeams.length < 2) return 0;
-    
-    const allParams = getAllParameters();
-    let totalDeviation = 0;
-    let paramCount = 0;
-    
-    allParams.forEach(paramDef => {
-        const teamValues = activeTeams.map(team => {
-            const teamData = getTeamData(team.id);
-            const param = teamData.parameters.find(p => p.id === paramDef.id);
-            return param ? param.value : paramDef.default;
-        });
-        
-        const mean = teamValues.reduce((a, b) => a + b, 0) / teamValues.length;
-        const deviation = teamValues.reduce((sum, v) => sum + Math.abs(v - mean), 0) / teamValues.length;
-        totalDeviation += deviation;
-        paramCount++;
-    });
-    
-    // Нормализуем к 0-100
-    return paramCount > 0 ? totalDeviation / paramCount : 0;
-}
 
 // Полный расчёт ИГС для набора параметров
 function calculateIGS(parameters, conflictValue = null) {
@@ -1201,7 +1172,10 @@ function joinSession(code, name, realRole) {
             
             // Загружаем данные сессии
             if (sessionData.session) {
-                state.session = { ...state.session, ...sessionData.session };
+                // Игнорируем session.phase — фазу берём из sessionData.phase (root)
+                const createdAt = sessionData.session.createdAt ? new Date(sessionData.session.createdAt) : null;
+                const { phase, ...rest } = sessionData.session;
+                state.session = { ...state.session, ...rest, createdAt };
             }
             state.session.code = code;
             state.session.phase = sessionData.phase || 0;
@@ -1459,6 +1433,8 @@ function renderParameters() {
     // Проверяем, является ли пользователь капитаном
     const userIsCaptain = isCaptain(state.user.id);
     const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
+    const currentPhase = Number(state.session.phase);
+    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
     
     // Рендерим параметры по категориям
     CONFIG.parameterCategories.forEach(category => {
@@ -1486,7 +1462,7 @@ function renderParameters() {
             const value = teamParam ? teamParam.value : param.default;
             
             // Ползунок неактивен если не капитан или заблокирован
-            const isDisabled = !userIsCaptain || isLocked;
+            const isDisabled = !userIsCaptain || isLocked || !isInputPhase;
             
             const card = document.createElement('div');
             card.className = `param-card ${isLocked ? 'locked' : ''} ${!userIsCaptain ? 'readonly' : ''}`;
@@ -1507,13 +1483,13 @@ function renderParameters() {
                         <span>${max}${param.unit}</span>
                     </div>
                 </div>
-                ${!userIsCaptain ? '<div class="param-notice">Только капитан может изменять</div>' : ''}
+                ${!userIsCaptain ? '<div class="param-notice">Только капитан может изменять</div>' : (!isInputPhase ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>' : '')}
             `;
             
             grid.appendChild(card);
             
             // Обработчик слайдера (только для капитана)
-            if (userIsCaptain && !isLocked) {
+            if (userIsCaptain && !isLocked && isInputPhase) {
                 const slider = card.querySelector(`#slider-${param.id}`);
                 slider.addEventListener('input', (e) => {
                     const newValue = parseInt(e.target.value);
@@ -1994,6 +1970,13 @@ function updatePhaseUI() {
     
     // Применяем логику фаз
     applyPhaseLogic(phase);
+
+    // Для участника всегда обновляем баннер события + статус кнопки
+    // (это исправляет кейс, когда фазу обновил общий listener, а phase-listener не сработал из-за гонки)
+    if (!state.user.isModerator) {
+        updateEventBanner(phase);
+        updateConfirmButton();
+    }
     
     // Логируем
     console.log(`📍 Фаза ${phase}: ${phaseConfig?.name} — ${phaseConfig?.desc}`);
