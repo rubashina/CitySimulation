@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Городской Симулятор — Партиципаторное проектирование</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+
+        <!-- Экран входа -->
+        <div id="login-screen" class="screen active">
+            <div class="login-container">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <svg viewBox="0 0 100 100" fill="none">
+                            <rect x="10" y="40" width="20" height="50" fill="currentColor" opacity="0.6"/>
+                            <rect x="40" y="20" width="20" height="70" fill="currentColor"/>
+                            <rect x="70" y="30" width="20" height="60" fill="currentColor" opacity="0.8"/>
+                            <circle cx="50" cy="15" r="8" fill="var(--accent)"/>
+                        </svg>
+                    </div>
+                    <h1>Городской Симулятор</h1>
+                    <p class="subtitle">Платформа партиципаторного проектирования</p>
+                </div>
+                
+                <div class="login-tabs">
+                    <button class="tab-btn active" data-tab="join">Присоединиться</button>
+                    <button class="tab-btn" data-tab="create">Создать сессию</button>
+                </div>
+                
+                <div class="login-form" id="join-form">
+                    <div class="input-group">
+                        <label>Код сессии</label>
+                        <input type="text" id="session-code" placeholder="ABC123" maxlength="6">
+                    </div>
+                    <div class="input-group">
+                        <label>Ваше имя</label>
+                        <input type="text" id="participant-name" placeholder="Введите имя">
+                    </div>
+                    <div class="input-group">
+                        <label>Ваша реальная роль</label>
+                        <select id="participant-real-role">
+                            <option value="">Выберите роль...</option>
+                            <option value="architect">Архитектор</option>
+                            <option value="activist">Активист</option>
+                            <option value="resident">Местный житель</option>
+                            <option value="admin">Представитель администрации</option>
+                            <option value="business">Представитель бизнес-сообщества</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" id="join-btn">Войти как участник</button>
+                </div>
+                
+                <div class="login-form hidden" id="create-form">
+                    <div class="input-group">
+                        <label>Название проекта</label>
+                        <input type="text" id="session-name" placeholder="Благоустройство парка">
+                    </div>
+                    <div class="input-group">
+                        <label>Ваше имя (модератор)</label>
+                        <input type="text" id="moderator-name" placeholder="Введите имя">
+                    </div>
+                    <div class="input-group">
+                        <label>Масштаб территории</label>
+                        <select id="project-scale">
+                            <option value="small">🏡 Малый (двор, сквер)</option>
+                            <option value="medium" selected>🏘️ Средний (квартал)</option>
+                            <option value="large">🏙️ Крупный (микрорайон)</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Уровень бюджета</label>
+                        <select id="budget-level">
+                            <option value="low">💰 Ограниченный (800)</option>
+                            <option value="medium" selected>💰💰 Стандартный (1200)</option>
+                            <option value="high">💰💰💰 Расширенный (1800)</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Код сессии (необязательно)</label>
+                        <input type="text" id="session-code-input" placeholder="Авто" maxlength="6">
+                    </div>
+                    <button class="btn btn-accent" id="create-btn">🚀 Создать сессию</button>
+                </div>
+                
+                <div class="demo-link">
+                    <button class="btn btn-ghost" id="demo-btn">Демо-режим</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Экран участника -->
+        <div id="participant-screen" class="screen">
+            <!-- Большой баннер фазы -->
+            <div class="phase-banner" id="phase-banner">
+                <div class="phase-banner-content">
+                    <span class="phase-banner-number">ФАЗА 0</span>
+                    <span class="phase-banner-title">Вводная</span>
+                    <span class="phase-banner-desc">Знакомство с проектом</span>
+                </div>
+            </div>
+            
+            <header class="header">
+                <div class="header-left">
+                    <span class="session-badge" id="p-session-code"></span>
+                    <h2 id="p-session-name">Симуляция</h2>
+                    <div class="phase-indicator-small">
+                        <span class="phase-label">ФАЗА</span>
+                        <span class="phase-number" id="p-phase">0</span>
+                        <span class="phase-title" id="p-phase-title">Вводная</span>
+                    </div>
+                </div>
+                <div class="header-center">
+                    <!-- Крупный дисплей ИГС как в En-ROADS -->
+                    <div class="igs-hero" id="igs-hero">
+                        <div class="igs-hero-label">ИНДЕКС ГОРОДСКОЙ СРЕДЫ</div>
+                        <div class="igs-hero-value">
+                            <span class="igs-number" id="igs-hero-value">42.5</span>
+                            <span class="igs-max">/100</span>
+                        </div>
+                        <div class="igs-hero-bar">
+                            <div class="igs-hero-fill" id="igs-hero-fill" style="width: 42.5%"></div>
+                        </div>
+                        <div class="igs-hero-budget">
+                            <span>💰 Бюджет:</span>
+                            <span id="budget-display">0 / 1200</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <span class="user-name" id="p-user-name"></span>
+                    <button class="btn btn-icon" id="p-history-toggle" title="История">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12,6 12,12 16,14"/>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+            
+            <main class="main-content">
+                <!-- Карточка игровой роли -->
+                <div class="role-card" id="role-card">
+                    <div class="role-header">
+                        <span class="role-label">ВАША ИГРОВАЯ РОЛЬ</span>
+                        <span class="role-team" id="role-team">Команда A</span>
+                    </div>
+                    <div class="role-name" id="role-name">Архитектор</div>
+                    <div class="role-desc" id="role-desc">Вы отстаиваете интересы архитектурного сообщества</div>
+                </div>
+                
+                <!-- Сообщение модератора / Событие -->
+                <div class="event-banner" id="event-banner">
+                    <div class="event-icon">📢</div>
+                    <div class="event-content">
+                        <div class="event-title" id="event-title">Добро пожаловать!</div>
+                        <div class="event-text" id="event-text">Ожидайте начала симуляции от модератора.</div>
+                    </div>
+                </div>
+                
+                <!-- Блокировка параметров -->
+                <div class="lock-overlay hidden" id="lock-overlay">
+                    <div class="lock-message">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                            <circle cx="12" cy="16" r="1"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                        <span id="lock-reason">Параметры заблокированы</span>
+                    </div>
+                </div>
+                
+                <!-- Интерактивная карта территории -->
+                <div class="territory-map-section">
+                    <div class="section-header">
+                        <h3>🗺️ Схема территории</h3>
+                        <button class="btn btn-sm btn-ghost" id="toggle-map">Свернуть</button>
+                    </div>
+                    <div class="territory-map" id="territory-map">
+                        <svg viewBox="0 0 400 300" class="map-svg" id="map-svg">
+                            <!-- Фон территории -->
+                            <rect x="0" y="0" width="400" height="300" fill="#1a2332"/>
+                            
+                            <!-- Дороги -->
+                            <g class="map-roads">
+                                <rect x="0" y="135" width="400" height="30" fill="#374151" class="road road-main"/>
+                                <rect x="185" y="0" width="30" height="300" fill="#374151" class="road road-cross"/>
+                            </g>
+                            
+                            <!-- Зелёные зоны -->
+                            <g class="map-green" id="map-green">
+                                <rect x="20" y="20" width="80" height="100" rx="10" fill="#10b981" opacity="0.4" class="zone zone-park"/>
+                                <rect x="300" y="180" width="80" height="100" rx="10" fill="#10b981" opacity="0.4" class="zone zone-park"/>
+                                <ellipse cx="100" cy="220" rx="40" ry="30" fill="#10b981" opacity="0.3" class="zone zone-garden"/>
+                            </g>
+                            
+                            <!-- Здания -->
+                            <g class="map-buildings" id="map-buildings">
+                                <rect x="120" y="25" width="50" height="40" fill="#6366f1" opacity="0.6" class="building"/>
+                                <rect x="230" y="25" width="60" height="35" fill="#6366f1" opacity="0.6" class="building"/>
+                                <rect x="300" y="40" width="45" height="70" fill="#6366f1" opacity="0.6" class="building"/>
+                                <rect x="25" y="180" width="70" height="50" fill="#6366f1" opacity="0.6" class="building"/>
+                                <rect x="230" y="200" width="55" height="60" fill="#6366f1" opacity="0.6" class="building"/>
+                            </g>
+                            
+                            <!-- Пешеходные дорожки -->
+                            <g class="map-paths" id="map-paths">
+                                <path d="M60 120 Q100 100 140 135" stroke="#f59e0b" stroke-width="3" fill="none" opacity="0.6"/>
+                                <path d="M260 165 Q300 200 340 180" stroke="#f59e0b" stroke-width="3" fill="none" opacity="0.6"/>
+                            </g>
+                            
+                            <!-- Точки интереса -->
+                            <g class="map-poi" id="map-poi">
+                                <circle cx="60" cy="60" r="8" fill="#06d6a0" class="poi poi-playground" data-type="playground"/>
+                                <circle cx="340" cy="230" r="8" fill="#06d6a0" class="poi poi-bench" data-type="bench"/>
+                                <rect x="125" y="200" width="16" height="16" rx="3" fill="#f59e0b" class="poi poi-shop" data-type="shop"/>
+                                <polygon points="320,60 328,76 312,76" fill="#ec4899" class="poi poi-transit" data-type="transit"/>
+                            </g>
+                            
+                            <!-- Легенда -->
+                            <g class="map-legend" transform="translate(10, 270)">
+                                <rect x="0" y="0" width="10" height="10" fill="#10b981" opacity="0.4"/>
+                                <text x="15" y="9" fill="#9ca3af" font-size="8">Озеленение</text>
+                                <rect x="70" y="0" width="10" height="10" fill="#6366f1" opacity="0.6"/>
+                                <text x="85" y="9" fill="#9ca3af" font-size="8">Здания</text>
+                                <rect x="130" y="0" width="10" height="10" fill="#374151"/>
+                                <text x="145" y="9" fill="#9ca3af" font-size="8">Дороги</text>
+                            </g>
+                        </svg>
+                        
+                        <!-- Информационная панель карты -->
+                        <div class="map-info-panel" id="map-info">
+                            <div class="map-stats">
+                                <div class="map-stat">
+                                    <span class="stat-icon">🌳</span>
+                                    <span class="stat-value" id="stat-green">32%</span>
+                                    <span class="stat-label">Озеленение</span>
+                                </div>
+                                <div class="map-stat">
+                                    <span class="stat-icon">🏢</span>
+                                    <span class="stat-value" id="stat-buildings">45%</span>
+                                    <span class="stat-label">Застройка</span>
+                                </div>
+                                <div class="map-stat">
+                                    <span class="stat-icon">🛣️</span>
+                                    <span class="stat-value" id="stat-roads">23%</span>
+                                    <span class="stat-label">Дороги</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Параметры -->
+                <div class="parameters-section">
+                    <h3>Параметры проекта</h3>
+                    <div class="parameters-grid" id="parameters-grid">
+                        <!-- Генерируется JS -->
+                    </div>
+                </div>
+                
+                <!-- Кнопка подтверждения -->
+                <div class="confirm-section">
+                    <button class="btn btn-confirm" id="confirm-btn" disabled>
+                        <span>Подтвердить решение</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20,6 9,17 4,12"/>
+                        </svg>
+                    </button>
+                    <div class="confirm-status" id="confirm-status"></div>
+                </div>
+            </main>
+            
+            <!-- Боковая панель истории -->
+            <aside class="history-panel" id="history-panel">
+                <div class="panel-header">
+                    <h3>История действий</h3>
+                    <button class="btn btn-icon" id="history-close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="history-list" id="history-list">
+                    <!-- Генерируется JS -->
+                </div>
+            </aside>
+        </div>
+        
+        <!-- Экран модератора -->
+        <div id="moderator-screen" class="screen">
+            <header class="header moderator-header">
+                <div class="header-left">
+                    <span class="session-badge moderator-badge" id="m-session-code"></span>
+                    <h2 id="m-session-name">Симуляция</h2>
+                </div>
+                <div class="header-center">
+                    <div class="phase-controls">
+                        <div class="phase-indicator">
+                            <span class="phase-label">ФАЗА</span>
+                            <span class="phase-number" id="m-phase">0</span>
+                            <span class="phase-title" id="m-phase-title">Вводная</span>
+                        </div>
+                        <button class="btn btn-accent" id="next-phase">
+                            <span>Следующая фаза</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="9,18 15,12 9,6"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button class="btn btn-warning" id="pause-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="6" y="4" width="4" height="16"/>
+                            <rect x="14" y="4" width="4" height="16"/>
+                        </svg>
+                        <span>Пауза</span>
+                    </button>
+                    <button class="btn btn-icon" id="export-menu-btn" title="Экспорт">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7,10 12,15 17,10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+            
+            <div class="moderator-layout">
+                <!-- Левая панель: Участники -->
+                <aside class="mod-sidebar left-sidebar">
+                    <div class="sidebar-section">
+                        <div class="section-header">
+                            <h3>Участники</h3>
+                            <span class="count-badge" id="participants-count">0</span>
+                        </div>
+                        <div class="participants-list" id="participants-list">
+                            <!-- Генерируется JS -->
+                        </div>
+                        <button class="btn btn-ghost btn-sm" id="add-bot-btn">+ Добавить бота</button>
+                    </div>
+                    
+                    <div class="sidebar-section">
+                        <div class="section-header">
+                            <h3>Аналитика</h3>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="metric-label">Конфликт D</div>
+                                <div class="metric-value" id="metric-d" style="color: var(--danger)">—</div>
+                                <div class="metric-desc">Расхождение команд</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Синхронизация</div>
+                                <div class="metric-value" id="metric-s">—</div>
+                                <div class="metric-desc">% подтвердивших</div>
+                            </div>
+                            <div class="metric-card full-width">
+                                <div class="metric-label">ИГС Консенсуса</div>
+                                <div class="consensus-bar">
+                                    <div class="consensus-fill" id="consensus-fill"></div>
+                                </div>
+                                <div class="metric-value" id="consensus-value">—</div>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+                
+                <!-- Центральная панель -->
+                <main class="mod-main">
+                    <!-- Табы -->
+                    <div class="mod-tabs">
+                        <button class="mod-tab active" data-panel="matrix">Матрица параметров</button>
+                        <button class="mod-tab" data-panel="chart">Графики</button>
+                        <button class="mod-tab" data-panel="events">Редактор событий</button>
+                        <button class="mod-tab" data-panel="log">Лог</button>
+                    </div>
+                    
+                    <!-- Панель: Матрица параметров -->
+                    <div class="mod-panel active" id="panel-matrix">
+                        <div class="matrix-container">
+                            <table class="params-matrix" id="params-matrix">
+                                <!-- Генерируется JS -->
+                            </table>
+                        </div>
+                        <div class="matrix-legend">
+                            <div class="legend-item">
+                                <span class="legend-color low"></span>
+                                <span>0-33</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-color mid"></span>
+                                <span>34-66</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-color high"></span>
+                                <span>67-100</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Панель: Графики -->
+                    <div class="mod-panel" id="panel-chart">
+                        <div class="chart-container">
+                            <canvas id="radar-chart"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="timeline-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- Панель: Редактор событий -->
+                    <div class="mod-panel" id="panel-events">
+                        <div class="events-editor">
+                            <div class="events-templates">
+                                <h4>Шаблоны событий</h4>
+                                <div class="templates-list">
+                                    <button class="template-btn" data-template="budget">
+                                        💰 Сокращение бюджета
+                                    </button>
+                                    <button class="template-btn" data-template="protest">
+                                        📣 Протест жителей
+                                    </button>
+                                    <button class="template-btn" data-template="eco">
+                                        🌿 Экологическое требование
+                                    </button>
+                                    <button class="template-btn" data-template="investor">
+                                        🏗️ Интерес инвестора
+                                    </button>
+                                    <button class="template-btn" data-template="tech">
+                                        ⚠️ Технический сбой
+                                    </button>
+                                    <button class="template-btn" data-template="custom">
+                                        ✏️ Свое событие
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="event-form">
+                                <h4>Создать событие</h4>
+                                <div class="input-group">
+                                    <label>Название</label>
+                                    <input type="text" id="event-name-input" placeholder="Название события">
+                                </div>
+                                <div class="input-group">
+                                    <label>Описание для участников</label>
+                                    <textarea id="event-desc-input" placeholder="Текст, который увидят участники"></textarea>
+                                </div>
+                                <div class="input-group">
+                                    <label>Эффект (функция)</label>
+                                    <select id="event-effect-select">
+                                        <option value="none">Без эффекта</option>
+                                        <option value="limit_max">Ограничить максимум</option>
+                                        <option value="limit_min">Ограничить минимум</option>
+                                        <option value="lock">Заблокировать параметр</option>
+                                        <option value="force">Установить значение</option>
+                                        <option value="lock_all">Заблокировать все</option>
+                                    </select>
+                                </div>
+                                <div class="effect-params" id="effect-params">
+                                    <!-- Генерируется динамически -->
+                                </div>
+                                <button class="btn btn-accent" id="send-event-btn">Отправить событие</button>
+                            </div>
+                            
+                            <div class="events-queue">
+                                <h4>Очередь событий</h4>
+                                <div class="queue-list" id="events-queue-list">
+                                    <div class="empty-state">Нет запланированных событий</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Панель: Лог -->
+                    <div class="mod-panel" id="panel-log">
+                        <div class="log-controls">
+                            <button class="btn btn-ghost btn-sm" id="clear-log">Очистить</button>
+                            <button class="btn btn-ghost btn-sm" id="export-log">Экспорт</button>
+                        </div>
+                        <div class="log-container" id="log-container">
+                            <!-- Генерируется JS -->
+                        </div>
+                    </div>
+                </main>
+                
+                <!-- Правая панель: Сообщения -->
+                <aside class="mod-sidebar right-sidebar">
+                    <div class="sidebar-section">
+                        <div class="section-header">
+                            <h3>Сообщение участникам</h3>
+                        </div>
+                        <textarea id="broadcast-message" placeholder="Введите сообщение для всех участников..."></textarea>
+                        <button class="btn btn-primary" id="send-broadcast">Отправить</button>
+                    </div>
+                    
+                    <div class="sidebar-section">
+                        <div class="section-header">
+                            <h3>Средний вектор группы</h3>
+                        </div>
+                        <div class="avg-params" id="avg-params">
+                            <!-- Генерируется JS -->
+                        </div>
+                    </div>
+                    
+                    <div class="sidebar-section">
+                        <div class="section-header">
+                            <h3>Быстрые действия</h3>
+                        </div>
+                        <div class="quick-actions">
+                            <button class="btn btn-ghost btn-sm" id="reset-all-btn">Сбросить параметры</button>
+                            <button class="btn btn-ghost btn-sm" id="unlock-all-btn">Разблокировать всё</button>
+                            <button class="btn btn-ghost btn-sm" id="force-confirm-btn">Принять за всех</button>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+            
+            <!-- Модальное окно экспорта -->
+            <div class="modal hidden" id="export-modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>Экспорт данных</h3>
+                        <button class="btn btn-icon modal-close">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="export-options">
+                        <button class="export-btn" data-format="json">
+                            <span class="export-icon">{ }</span>
+                            <span class="export-label">JSON</span>
+                        </button>
+                        <button class="export-btn" data-format="csv">
+                            <span class="export-icon">📊</span>
+                            <span class="export-label">CSV</span>
+                        </button>
+                        <button class="export-btn" data-format="xlsx">
+                            <span class="export-icon">📗</span>
+                            <span class="export-label">XLSX</span>
+                        </button>
+                        <button class="export-btn" data-format="pdf">
+                            <span class="export-icon">📄</span>
+                            <span class="export-label">PDF Отчёт</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Уведомления -->
+    <div class="notifications" id="notifications"></div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    
+    <script src="app.js"></script>
+</body>
+</html>
+
