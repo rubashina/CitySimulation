@@ -119,6 +119,7 @@
                     <!-- Крупный дисплей ИГС как в En-ROADS -->
                     <div class="igs-hero" id="igs-hero">
                         <div class="igs-hero-label">ИНДЕКС ГОРОДСКОЙ СРЕДЫ</div>
+                        <div class="igs-hero-sub" id="igs-hero-sub">ИГС — индекс городской среды</div>
                         <div class="igs-hero-value">
                             <span class="igs-number" id="igs-hero-value">42.5</span>
                             <span class="igs-max">/100</span>
@@ -162,6 +163,15 @@
                         <div class="event-text" id="event-text">Ожидайте начала симуляции от модератора.</div>
                     </div>
                 </div>
+
+                <!-- Сообщения модератора (broadcast) -->
+                <div class="broadcast-banner hidden" id="broadcast-banner">
+                    <div class="broadcast-icon">💬</div>
+                    <div class="broadcast-content">
+                        <div class="broadcast-title">Сообщение модератора</div>
+                        <div class="broadcast-text" id="broadcast-text"></div>
+                    </div>
+                </div>
                 
                 <!-- Блокировка параметров -->
                 <div class="lock-overlay hidden" id="lock-overlay">
@@ -194,9 +204,9 @@
                             
                             <!-- Зелёные зоны -->
                             <g class="map-green" id="map-green">
-                                <rect x="20" y="20" width="80" height="100" rx="10" fill="#10b981" opacity="0.4" class="zone zone-park"/>
-                                <rect x="300" y="180" width="80" height="100" rx="10" fill="#10b981" opacity="0.4" class="zone zone-park"/>
-                                <ellipse cx="100" cy="220" rx="40" ry="30" fill="#10b981" opacity="0.3" class="zone zone-garden"/>
+                                <rect x="20" y="20" width="80" height="100" rx="18" fill="#10b981" opacity="0.55" class="zone zone-park"/>
+                                <rect x="300" y="180" width="80" height="100" rx="18" fill="#10b981" opacity="0.55" class="zone zone-park"/>
+                                <ellipse cx="100" cy="220" rx="42" ry="34" fill="#10b981" opacity="0.5" class="zone zone-garden"/>
                             </g>
                             
                             <!-- Здания -->
@@ -257,7 +267,7 @@
                 </div>
                 
                 <!-- Параметры -->
-                <div class="parameters-section">
+                <div class="parameters-section" id="parameters-section">
                     <h3>Параметры проекта</h3>
                     <div class="parameters-grid" id="parameters-grid">
                         <!-- Генерируется JS -->
@@ -554,6 +564,21 @@
                         </button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Экран завершения игры (для всех) -->
+        <div class="endgame-overlay hidden" id="endgame-overlay" role="dialog" aria-modal="true">
+            <div class="endgame-card">
+                <div class="endgame-title">🏁 Игра завершена</div>
+                <div class="endgame-subtitle">Спасибо за участие! Итоговый консенсусный ИГС:</div>
+                <div class="endgame-igs">
+                    <span class="endgame-igs-value" id="endgame-igs-value">0.0</span>
+                    <span class="endgame-igs-max">/100</span>
+                </div>
+                <div class="endgame-sparkline" id="endgame-sparkline"></div>
+                <div class="endgame-hint">Динамика консенсуса по фазам</div>
+                <button class="btn btn-ghost" id="endgame-close">Закрыть</button>
             </div>
         </div>
     </div>

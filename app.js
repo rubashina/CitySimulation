@@ -36,6 +36,56 @@ const LOCAL_SYNC = {
     enabled: true
 };
 
+// =====================================================
+// МОДЕРАЦИЯ/СООБЩЕНИЯ (broadcast)
+// =====================================================
+
+function showBroadcast(message, meta = {}) {
+    if (!message) return;
+    
+    // Баннер на экране участника
+    const banner = $('#broadcast-banner');
+    const textEl = $('#broadcast-text');
+    if (banner && textEl) {
+        textEl.textContent = message;
+        banner.classList.remove('hidden');
+        // Автоскрытие
+        setTimeout(() => banner.classList.add('hidden'), 9000);
+    }
+    
+    showNotification(`Сообщение модератора: ${message}`, 'info');
+    addToLog('broadcast', `Сообщение модератора: ${message}`);
+}
+
+function sendBroadcastMessage(message) {
+    if (!message || !state.session.code) return;
+    
+    const payload = {
+        message,
+        from: state.user.name || (state.user.isModerator ? 'Модератор' : 'Участник'),
+        time: new Date().toISOString()
+    };
+    
+    // Локальный режим: рассылаем между вкладками
+    if (!firebaseEnabled) {
+        localBroadcast({ type: 'broadcast', code: state.session.code, payload });
+        showBroadcast(message, payload);
+        return;
+    }
+    
+    // Firebase: пишем в sessions/{code}/broadcasts
+    try {
+        const ref = firebaseDB.ref(`sessions/${state.session.code}/broadcasts`).push();
+        ref.set(payload).catch((e) => {
+            console.error('❌ Ошибка отправки сообщения модератора:', e);
+            showNotification('Не удалось отправить сообщение', 'error');
+        });
+    } catch (e) {
+        console.error('❌ Ошибка отправки сообщения модератора:', e);
+        showNotification('Не удалось отправить сообщение', 'error');
+    }
+}
+
 function localSessionKey(code) {
     return `${LOCAL_SYNC.storagePrefix}sessions:${code}`;
 }
@@ -148,6 +198,11 @@ function handleLocalMessage(msg) {
                 } else {
                     updateIGSDisplay();
                 }
+            }
+            break;
+        case 'broadcast':
+            if (msg.payload?.message) {
+                showBroadcast(msg.payload.message, msg.payload);
             }
             break;
     }
@@ -335,6 +390,15 @@ function subscribeToSession(sessionCode) {
             
             addToLog('phase', `Переход к фазе ${phase}: ${CONFIG.phases[phase]?.name}`);
         }
+    });
+
+    // Сообщения модератора
+    sessionRef.child('broadcasts').limitToLast(20).on('child_added', (snapshot) => {
+        const payload = snapshot.val();
+        if (!payload?.message) return;
+        // Не показываем самому себе, если это модератор в той же вкладке
+        if (payload.from && payload.from === state.user.name && state.user.isModerator) return;
+        showBroadcast(payload.message, payload);
     });
     
     console.log(`📡 Подписка на сессию ${sessionCode}`);
@@ -1394,6 +1458,16 @@ function initParticipantScreen() {
     updatePhaseUI();
     updateEventBanner(state.session.phase);
     
+    // Автопрокрутка к игровому контенту (после входа)
+    setTimeout(() => {
+        const paramsSection = $('#parameters-section') || $('#parameters-grid') || $('#event-banner');
+        if (paramsSection?.scrollIntoView) {
+            paramsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    }, 250);
+    
     // Кнопка подтверждения
     $('#confirm-btn').addEventListener('click', confirmDecision);
 }
@@ -1648,14 +1722,18 @@ function updateTerritoryMap() {
     const hardCover = getParamValue('Ca');   // Твёрдое покрытие
     const lighting = getParamValue('O');     // Освещённость
     const bikePaths = getParamValue('B');    // Велоинфраструктура
+    const igsTotal = calculateIGS(teamData.parameters).total;
     
     // Обновляем визуализацию карты
     
-    // Зелёные зоны — меняем прозрачность
+    // Зелёные зоны — меняем РАЗМЕР (мягко) вместо прозрачности.
+    // Привязываем к итоговому ИГС: при высоком ИГС "озеленение" заполняет поле.
     const greenElements = mapSvg.querySelectorAll('.zone');
     greenElements.forEach(el => {
-        el.style.opacity = 0.2 + (greenZones / 100) * 0.6;
+        const scale = Math.max(0.55, Math.min(3.0, 0.55 + (igsTotal / 100) * 2.45));
+        el.style.transform = `scale(${scale})`;
     });
+    mapSvg.classList.toggle('igs-max', igsTotal >= 95);
     
     // Дороги — меняем цвет по трафику
     const roadElements = mapSvg.querySelectorAll('.road');
@@ -1756,14 +1834,17 @@ function updateConfirmButton() {
         return;
     }
     
-    // Проверяем, были ли изменения (отличаются от дефолтных значений)
+    // В фазах ввода капитан может подтвердить как "статус-кво", так и изменения.
+    // (это соответствует сценарию: в фазе 1 можно подтвердить решение даже без правок)
+    btn.disabled = false;
+    
+    // Небольшая подсказка, если изменений нет
     const allParams = getAllParameters();
-    const hasChanges = teamData?.parameters.some(p => {
+    const hasChanges = teamData?.parameters?.some(p => {
         const defaultParam = allParams.find(dp => dp.id === p.id);
         return defaultParam && p.value !== defaultParam.default;
-    });
-    btn.disabled = !hasChanges;
-    statusEl.textContent = hasChanges ? '' : 'Внесите изменения в параметры';
+    }) ?? false;
+    statusEl.textContent = hasChanges ? '' : 'Можно подтвердить статус-кво или внесите изменения';
 }
 
 function confirmDecision() {
@@ -1977,9 +2058,83 @@ function updatePhaseUI() {
         updateEventBanner(phase);
         updateConfirmButton();
     }
+
+    // Экран завершения игры
+    if (phase === 5) {
+        showEndgameOverlay();
+    }
     
     // Логируем
     console.log(`📍 Фаза ${phase}: ${phaseConfig?.name} — ${phaseConfig?.desc}`);
+}
+
+function initEndgameOverlay() {
+    const closeBtn = $('#endgame-close');
+    if (closeBtn) closeBtn.addEventListener('click', hideEndgameOverlay);
+}
+
+function hideEndgameOverlay() {
+    const overlay = $('#endgame-overlay');
+    if (overlay) overlay.classList.add('hidden');
+}
+
+function showEndgameOverlay() {
+    const overlay = $('#endgame-overlay');
+    const valueEl = $('#endgame-igs-value');
+    const sparklineEl = $('#endgame-sparkline');
+    if (!overlay || !valueEl || !sparklineEl) return;
+    
+    // Итоговый консенсус
+    const avg = calculateAverageIGS();
+    const target = avg ? avg.total : (state.user.team ? calculateTeamIGS(state.user.team.id).total : 0);
+    
+    overlay.classList.remove('hidden');
+    
+    // Анимация числа
+    const start = Number(valueEl.textContent) || 0;
+    const duration = 1400;
+    const t0 = performance.now();
+    const ease = (t) => 1 - Math.pow(1 - t, 3);
+    
+    const step = (now) => {
+        const t = Math.min(1, (now - t0) / duration);
+        const v = start + (target - start) * ease(t);
+        valueEl.textContent = v.toFixed(1);
+        if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    
+    // Спарклайн по динамике консенсуса
+    const points = (state.timelineData || [])
+        .filter(d => typeof d.consensusIGS === 'number')
+        .map(d => d.consensusIGS);
+    const series = points.length >= 2 ? points : [start, target];
+    
+    const w = 540;
+    const h = 90;
+    const pad = 10;
+    const minV = Math.min(...series, 0);
+    const maxV = Math.max(...series, 100);
+    const xStep = (w - pad * 2) / Math.max(1, series.length - 1);
+    const y = (val) => {
+        const t = (val - minV) / Math.max(1e-6, (maxV - minV));
+        return (h - pad) - t * (h - pad * 2);
+    };
+    
+    const d = series.map((v, i) => `${i === 0 ? 'M' : 'L'} ${pad + i * xStep} ${y(v).toFixed(2)}`).join(' ');
+    
+    sparklineEl.innerHTML = `
+        <svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" preserveAspectRatio="none">
+            <defs>
+                <linearGradient id="endgameGrad" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#ef4444"/>
+                    <stop offset="50%" stop-color="#f59e0b"/>
+                    <stop offset="100%" stop-color="#10b981"/>
+                </linearGradient>
+            </defs>
+            <path d="${d}" fill="none" stroke="url(#endgameGrad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    `;
 }
 
 // Логика блокировок и действий по фазам
@@ -2167,10 +2322,16 @@ function addParticipant(name, isBot = false, values = null, realRole = null) {
 // Матрица параметров — ПО КОМАНДАМ с ИГС
 function renderParamsMatrix() {
     const matrix = $('#params-matrix');
+    if (!matrix) return;
     const activeTeams = getActiveTeams();
     
     if (activeTeams.length === 0) {
-        matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Нет активных команд</td></tr>';
+        // Если участники есть, но команд нет — значит у участников не назначены команды (данные битые)
+        if (state.participants.length > 0) {
+            matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Участники есть, но команды не определены (проверьте, что у участника есть поле team.id)</td></tr>';
+        } else {
+            matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Нет активных команд</td></tr>';
+        }
         return;
     }
     
@@ -2187,11 +2348,14 @@ function renderParamsMatrix() {
         const captain = teamMembers.find(m => m.id === teamData.captainId);
         const igs = calculateIGS(teamData.parameters);
         
+        // Роли команды (по реальным ролям участников)
+        const roleIcons = [...new Set(teamMembers.map(m => CONFIG.realRoles[m.realRole]?.icon).filter(Boolean))].join(' ');
+        
         html += `<tr style="border-left: 4px solid ${team.color}">`;
         html += `<td class="participant-name-cell">
             <div><strong>${team.name}</strong></div>
             <div style="font-size: 0.75rem; color: var(--text-muted)">
-                ${teamMembers.length} уч. | 👑 ${captain?.name || '—'}
+                ${teamMembers.length} уч. | 👑 ${captain?.name || '—'}${roleIcons ? ` | ${roleIcons}` : ''}
             </div>
         </td>`;
         
@@ -2507,7 +2671,7 @@ function initModeratorActions() {
     $('#send-broadcast').addEventListener('click', () => {
         const message = $('#broadcast-message').value.trim();
         if (message) {
-            addToLog('broadcast', `Сообщение: ${message}`);
+            sendBroadcastMessage(message);
             showNotification('Сообщение отправлено', 'success');
             $('#broadcast-message').value = '';
         }
@@ -2994,6 +3158,7 @@ document.addEventListener('DOMContentLoaded', () => {
         initFirebase();
         
         initLoginScreen();
+        initEndgameOverlay();
         console.log('✅ Симулятор загружен');
     } catch (error) {
         console.error('❌ Ошибка инициализации:', error);
