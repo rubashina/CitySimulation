@@ -386,15 +386,15 @@ function saveSessionToFirebase() {
     
     const sessionRef = firebaseDB.ref(`sessions/${state.session.code}`);
     
+    // ВАЖНО: нельзя делать update() с пересекающимися путями вида { session: {...}, 'session/phase': null }
+    // поэтому пишем session/* "плоско".
     const data = {
-        session: {
-            name: state.session.name,
-            isPaused: state.session.isPaused,
-            projectScale: state.session.projectScale,
-            budgetLevel: state.session.budgetLevel,
-            budgetTotal: state.session.budgetTotal,
-            createdAt: state.session.createdAt?.toISOString()
-        },
+        'session/name': state.session.name,
+        'session/isPaused': state.session.isPaused,
+        'session/projectScale': state.session.projectScale,
+        'session/budgetLevel': state.session.budgetLevel,
+        'session/budgetTotal': state.session.budgetTotal,
+        'session/createdAt': state.session.createdAt?.toISOString() || null,
         // Фаза хранится отдельным полем (sessions/{code}/phase)
         phase: state.session.phase,
         // Удаляем устаревшее поле session/phase (иначе старые клиенты могут откатывать фазу)
