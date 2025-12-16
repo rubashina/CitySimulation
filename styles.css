@@ -997,8 +997,10 @@ h4 { font-size: 1rem; }
 
 .moderator-layout {
     display: grid;
-    grid-template-columns: 280px 1fr 300px;
+    /* Защита от "пропажи" центральной колонки на узких окнах: */
+    grid-template-columns: minmax(240px, 280px) minmax(560px, 1fr) minmax(260px, 300px);
     min-height: calc(100vh - 65px);
+    overflow-x: auto;
 }
 
 /* Sidebars */
@@ -1180,6 +1182,7 @@ h4 { font-size: 1rem; }
     flex-direction: column;
     background: var(--bg-primary);
     overflow: hidden;
+    min-width: 560px;
 }
 
 /* Tabs */

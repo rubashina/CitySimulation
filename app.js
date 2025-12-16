@@ -205,6 +205,14 @@ function handleLocalMessage(msg) {
                 showBroadcast(msg.payload.message, msg.payload);
             }
             break;
+        case 'event':
+            if (!state.user.isModerator && msg.event?.effect) {
+                applyEventEffect(msg.event);
+                renderParameters();
+                updateConfirmButton();
+                showNotification(`Событие: ${msg.event.name || 'изменение условий'}`, 'warning');
+            }
+            break;
     }
 }
 
@@ -399,6 +407,20 @@ function subscribeToSession(sessionCode) {
         // Не показываем самому себе, если это модератор в той же вкладке
         if (payload.from && payload.from === state.user.name && state.user.isModerator) return;
         showBroadcast(payload.message, payload);
+    });
+
+    // События модератора (интермиссия и т.п.)
+    sessionRef.child('events').limitToLast(20).on('child_added', (snapshot) => {
+        const event = snapshot.val();
+        if (!event?.effect) return;
+        
+        // Участники применяют эффекты
+        if (!state.user.isModerator) {
+            applyEventEffect(event);
+            renderParameters();
+            updateConfirmButton();
+            showNotification(`Событие: ${event.name || 'изменение условий'}`, 'warning');
+        }
     });
     
     console.log(`📡 Подписка на сессию ${sessionCode}`);
@@ -638,6 +660,14 @@ const CONFIG = {
             icon: '💰💰💰',
             totalPoints: 1800
         }
+    },
+
+    // Лимит "ходов" (кол-во разных ползунков, которые капитан может изменить за фазу ввода)
+    // Связано с уровнем бюджета, как вы просили: 800→4, 1200→6, 1800→8
+    moveLimitsByBudgetLevel: {
+        low: 4,
+        medium: 6,
+        high: 8
     },
     
     // Стоимость изменения параметров (очков за +10 единиц)
@@ -1063,6 +1093,9 @@ function initTeamData(teamId) {
             parameters: parameters,
             confirmed: false,
             captainId: null,
+            // Ограничение ходов (сколько разных ползунков трогали в текущей фазе ввода)
+            movesPhase: null,
+            movesUsed: [],
             round1Snapshot: null,  // Снимок после раунда 1
             igsHistory: []         // История ИГС
         };
@@ -1173,30 +1206,49 @@ function initLoginScreen() {
     
     // Присоединиться к сессии
     $('#join-btn').addEventListener('click', () => {
+        const joinBtn = $('#join-btn');
+        if (joinBtn?.dataset?.busy === '1') return;
+        if (joinBtn) {
+            joinBtn.dataset.busy = '1';
+            joinBtn.disabled = true;
+        }
         const code = $('#session-code').value.trim().toUpperCase();
         const name = $('#participant-name').value.trim();
         const realRole = $('#participant-real-role').value;
         
         if (!code || code.length !== 6) {
             showNotification('Введите корректный код сессии (6 символов)', 'error');
+            if (joinBtn) { joinBtn.dataset.busy = '0'; joinBtn.disabled = false; }
             return;
         }
         
         if (!name) {
             showNotification('Введите ваше имя', 'error');
+            if (joinBtn) { joinBtn.dataset.busy = '0'; joinBtn.disabled = false; }
             return;
         }
         
         if (!realRole) {
             showNotification('Выберите вашу реальную роль', 'error');
+            if (joinBtn) { joinBtn.dataset.busy = '0'; joinBtn.disabled = false; }
             return;
         }
         
-        joinSession(code, name, realRole);
+        showNotification('Подключаюсь к сессии…', 'info');
+        joinSession(code, name, realRole)
+            .finally(() => {
+                if (joinBtn) { joinBtn.dataset.busy = '0'; joinBtn.disabled = false; }
+            });
     });
     
     // Создать сессию
     $('#create-btn').addEventListener('click', () => {
+        const createBtn = $('#create-btn');
+        if (createBtn?.dataset?.busy === '1') return;
+        if (createBtn) {
+            createBtn.dataset.busy = '1';
+            createBtn.disabled = true;
+        }
         const sessionName = $('#session-name').value.trim() || 'Новый проект';
         const customCode = $('#session-code-input').value.trim().toUpperCase();
         const moderatorName = $('#moderator-name').value.trim() || 'Модератор';
@@ -1208,10 +1260,15 @@ function initLoginScreen() {
         // Валидация кода, если введён
         if (customCode && !/^[A-Z0-9]{1,6}$/.test(customCode)) {
             showNotification('Код сессии: только латиница и цифры (до 6 символов)', 'error');
+            if (createBtn) { createBtn.dataset.busy = '0'; createBtn.disabled = false; }
             return;
         }
         
-        createSession(sessionName, moderatorName, customCode, projectScale, budgetLevel);
+        showNotification('Создаю сессию…', 'info');
+        Promise.resolve(createSession(sessionName, moderatorName, customCode, projectScale, budgetLevel))
+            .finally(() => {
+                if (createBtn) { createBtn.dataset.busy = '0'; createBtn.disabled = false; }
+            });
     });
     
     // Демо-режим
@@ -1224,12 +1281,12 @@ function joinSession(code, name, realRole) {
     // Если Firebase включен - сначала проверяем существование сессии
     if (firebaseEnabled) {
         const sessionRef = firebaseDB.ref(`sessions/${code}`);
-        sessionRef.once('value').then((snapshot) => {
+        return sessionRef.once('value').then((snapshot) => {
             const sessionData = snapshot.val();
             
             if (!sessionData) {
                 showNotification('Сессия не найдена! Проверьте код.', 'error');
-                return;
+                return Promise.reject(new Error('Session not found'));
             }
             
             console.log('✅ Сессия найдена:', sessionData);
@@ -1247,9 +1304,11 @@ function joinSession(code, name, realRole) {
             // Теперь подключаем участника
             completeJoinSession(code, name, realRole);
             
+            return true;
         }).catch((error) => {
             console.error('❌ Ошибка Firebase:', error);
             showNotification('Ошибка подключения. Попробуйте снова.', 'error');
+            throw error;
         });
     } else {
         // Без Firebase — подключаемся к локальной сессии (между вкладками)
@@ -1257,7 +1316,7 @@ function joinSession(code, name, realRole) {
         const localSession = localReadSession(code);
         if (!localSession) {
             showNotification('Сессия не найдена (локально). Создайте её в другой вкладке или включите Firebase.', 'error');
-            return;
+            return Promise.reject(new Error('Local session not found'));
         }
         
         // Загружаем данные сессии из localStorage
@@ -1271,6 +1330,7 @@ function joinSession(code, name, realRole) {
         
         // Подключаем участника
         completeJoinSession(code, name, realRole);
+        return Promise.resolve(true);
     }
 }
 
@@ -1509,6 +1569,18 @@ function renderParameters() {
     const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
+    const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+    
+    // Нормализуем состояние лимита ходов для команды
+    if (teamData) {
+        if (teamData.movesPhase !== currentPhase) {
+            teamData.movesPhase = currentPhase;
+            teamData.movesUsed = [];
+        }
+        if (!Array.isArray(teamData.movesUsed)) teamData.movesUsed = [];
+    }
+    const movesUsed = teamData?.movesUsed || [];
+    const movesRemaining = Math.max(0, moveLimit - movesUsed.length);
     
     // Рендерим параметры по категориям
     CONFIG.parameterCategories.forEach(category => {
@@ -1536,7 +1608,10 @@ function renderParameters() {
             const value = teamParam ? teamParam.value : param.default;
             
             // Ползунок неактивен если не капитан или заблокирован
-            const isDisabled = !userIsCaptain || isLocked || !isInputPhase;
+            const alreadyUsedThisPhase = movesUsed.includes(param.id);
+            const movesExhausted = movesRemaining <= 0;
+            const blockedByMoveLimit = movesExhausted && !alreadyUsedThisPhase;
+            const isDisabled = !userIsCaptain || isLocked || !isInputPhase || !!teamData?.confirmed || blockedByMoveLimit;
             
             const card = document.createElement('div');
             card.className = `param-card ${isLocked ? 'locked' : ''} ${!userIsCaptain ? 'readonly' : ''}`;
@@ -1557,21 +1632,55 @@ function renderParameters() {
                         <span>${max}${param.unit}</span>
                     </div>
                 </div>
-                ${!userIsCaptain ? '<div class="param-notice">Только капитан может изменять</div>' : (!isInputPhase ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>' : '')}
+                ${!userIsCaptain
+                    ? '<div class="param-notice">Только капитан может изменять</div>'
+                    : (!isInputPhase
+                        ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
+                        : (teamData?.confirmed
+                            ? '<div class="param-notice">Решение подтверждено — изменения заблокированы</div>'
+                            : (blockedByMoveLimit
+                                ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
+                                : (movesUsed.length > 0
+                                    ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
+                                    : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))))}
             `;
             
             grid.appendChild(card);
             
             // Обработчик слайдера (только для капитана)
-            if (userIsCaptain && !isLocked && isInputPhase) {
+            if (userIsCaptain && !isLocked && isInputPhase && !teamData?.confirmed) {
                 const slider = card.querySelector(`#slider-${param.id}`);
                 slider.addEventListener('input', (e) => {
                     const newValue = parseInt(e.target.value);
+                    const teamDataNow = state.user.team ? getTeamData(state.user.team.id) : null;
+                    if (!teamDataNow) return;
+                    
+                    // Если фаза сменилась — сбрасываем счётчик изменений
+                    if (teamDataNow.movesPhase !== currentPhase) {
+                        teamDataNow.movesPhase = currentPhase;
+                        teamDataNow.movesUsed = [];
+                    }
+                    
+                    const used = Array.isArray(teamDataNow.movesUsed) ? teamDataNow.movesUsed : (teamDataNow.movesUsed = []);
+                    const alreadyUsed = used.includes(param.id);
+                    const limit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+                    if (!alreadyUsed && used.length >= limit) {
+                        // Отменяем изменение: возвращаем ползунок к текущему сохранённому значению
+                        const prevValue = teamDataNow.parameters.find(p => p.id === param.id)?.value ?? value;
+                        e.target.value = String(prevValue);
+                        card.querySelector(`#value-${param.id}`).textContent = prevValue + param.unit;
+                        showNotification(`Лимит изменений на фазу исчерпан (${limit}).`, 'warning');
+                        return;
+                    }
+                    if (!alreadyUsed) {
+                        used.push(param.id);
+                    }
+                    
                     card.querySelector(`#value-${param.id}`).textContent = newValue + param.unit;
                     
                     // Обновляем данные команды
-                    if (teamData) {
-                        const teamParamData = teamData.parameters.find(p => p.id === param.id);
+                    if (teamDataNow) {
+                        const teamParamData = teamDataNow.parameters.find(p => p.id === param.id);
                         if (teamParamData) teamParamData.value = newValue;
                         
                         // Синхронизируем с Firebase (с debounce)
@@ -1581,6 +1690,11 @@ function renderParameters() {
                     // Обновляем ИГС в реальном времени
                     updateIGSDisplay();
                     updateConfirmButton();
+                    
+                    // Перерисуем, чтобы заблокировать "лишние" ползунки, когда лимит исчерпан
+                    if (!alreadyUsed && used.length >= (CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6)) {
+                        renderParameters();
+                    }
                 });
             }
         });
@@ -1674,7 +1788,12 @@ function updateIGSHero() {
     if (!teamData) return;
     
     const igs = calculateIGS(teamData.parameters);
-    const budgetUsed = calculateBudgetUsed(teamData.parameters);
+    // Бюджет как ограничение "ходов": сколько разных ползунков можно тронуть за фазу ввода
+    const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+    const currentPhase = Number(state.session.phase);
+    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
+    const movesUsed = (teamData.movesPhase === currentPhase && Array.isArray(teamData.movesUsed)) ? teamData.movesUsed.length : 0;
+    const budgetUsed = isInputPhase ? Math.round((movesUsed / Math.max(1, moveLimit)) * state.session.budgetTotal) : calculateBudgetUsed(teamData.parameters);
     const budgetTotal = state.session.budgetTotal;
     
     heroValue.textContent = igs.total.toFixed(1);
@@ -1865,6 +1984,9 @@ function confirmDecision() {
     $('#confirm-status').textContent = 'Решение команды подтверждено ✓';
     $('#confirm-btn').disabled = true;
     
+    // После подтверждения блокируем ползунки (до смены фазы)
+    renderParameters();
+    
     addToHistory(`Подтвердили решение за ${state.user.team.name}`);
     addToLog('confirm', `${state.user.team.name} подтвердила решение (капитан: ${state.user.name})`);
     showNotification('Решение команды отправлено!', 'success');
@@ -1913,10 +2035,27 @@ function initModeratorScreen() {
     initEventEditor();
     initModeratorActions();
     initExportModal();
+    
+    // Гарантируем, что видна матрица по умолчанию
+    try {
+        $$('.mod-tab').forEach(t => t.classList.remove('active'));
+        $$('.mod-panel').forEach(p => p.classList.remove('active'));
+        const matrixTab = document.querySelector('.mod-tab[data-panel="matrix"]');
+        const matrixPanel = $('#panel-matrix');
+        if (matrixTab) matrixTab.classList.add('active');
+        if (matrixPanel) matrixPanel.classList.add('active');
+    } catch (_) {}
+    
     renderParticipantsList();
     renderParamsMatrix();
     renderAvgParams();
     initCharts();
+
+    // Подстраховка: прокрутить к матрице, если пользователь "видит только участников"
+    setTimeout(() => {
+        const panel = $('#panel-matrix');
+        if (panel?.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 200);
 }
 
 function updateModeratorHeader() {
@@ -2567,6 +2706,31 @@ function sendEvent() {
     
     // Применяем эффект
     applyEventEffect(event);
+
+    // Отправляем событие участникам (Firebase / local)
+    console.log('📣 sendEvent: отправляю событие участникам', {
+        code: state.session.code,
+        phase: state.session.phase,
+        effect: event.effect,
+        params: event.params
+    });
+    if (!state.session.code) {
+        console.warn('⚠️ sendEvent: нет кода сессии');
+    } else if (!firebaseEnabled) {
+        localBroadcast({ type: 'event', code: state.session.code, event });
+    } else {
+        try {
+            firebaseDB.ref(`sessions/${state.session.code}/events`).push().set(event).then(() => {
+                console.log('✅ sendEvent: событие записано в Firebase');
+            }).catch((e) => {
+                console.error('❌ Ошибка отправки события в Firebase:', e);
+                showNotification('Не удалось отправить событие', 'error');
+            });
+        } catch (e) {
+            console.error('❌ Ошибка отправки события в Firebase:', e);
+            showNotification('Не удалось отправить событие', 'error');
+        }
+    }
     
     // Добавляем в лог
     addToLog('event', `Событие: ${name}`);
