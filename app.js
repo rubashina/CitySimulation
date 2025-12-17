@@ -1135,7 +1135,7 @@ function calculateTeamIGS(teamId) {
 
 // Расчёт среднего ИГС по всем командам
 function calculateAverageIGS() {
-    const activeTeams = getActiveTeams();
+    const activeTeams = getTeamsForAnalytics();
     if (activeTeams.length === 0) return null;
     
     // Собираем средние значения параметров
@@ -1282,6 +1282,40 @@ function getActiveTeams() {
         });
     
     return [...fromConfig, ...extras];
+}
+
+// Команды для аналитики/матрицы.
+// Для модератора показываем ВСЕ команды (даже если участники ещё не успели подтянуться из Firebase),
+// для участника — только активные команды (с участниками).
+function getTeamsForAnalytics() {
+    if (state.user?.isModerator) return CONFIG.teams;
+    return getActiveTeams();
+}
+
+// Конфликт интересов D: среднее расхождение команд по всем параметрам.
+// Возвращает число ~[0..100], где 0 = полное согласие.
+function calculateConflict() {
+    const teams = getTeamsForAnalytics();
+    if (teams.length < 2) return 0;
+    
+    const allParams = getAllParameters();
+    let totalDeviation = 0;
+    let paramCount = 0;
+    
+    allParams.forEach(paramDef => {
+        const teamValues = teams.map(team => {
+            const teamData = getTeamData(team.id);
+            const param = teamData.parameters.find(p => p.id === paramDef.id);
+            return param ? param.value : paramDef.default;
+        });
+        
+        const mean = teamValues.reduce((a, b) => a + b, 0) / teamValues.length;
+        const deviation = teamValues.reduce((sum, v) => sum + Math.abs(v - mean), 0) / teamValues.length;
+        totalDeviation += deviation;
+        paramCount++;
+    });
+    
+    return paramCount > 0 ? totalDeviation / paramCount : 0;
 }
 
 // =====================================================
@@ -1646,6 +1680,13 @@ function createSession(sessionName, moderatorName, customCode = '', projectScale
     
     // Инициализируем параметры из новой структуры
     state.parameters = getAllParameters();
+
+    // Инициализируем данные ВСЕХ команд сразу (чтобы матрица/метрики у модератора были видны даже без участников)
+    try {
+        CONFIG.teams.forEach(t => initTeamData(t.id));
+    } catch (e) {
+        console.warn('⚠️ Не удалось инициализировать команды при старте сессии:', e);
+    }
     
     // Сохраняем начальное состояние
     state.session.initialSnapshot = JSON.parse(JSON.stringify(state.teamsData));
@@ -2583,7 +2624,7 @@ function renderParticipantsList() {
         return;
     }
     
-    const activeTeams = getActiveTeams();
+    const activeTeams = getTeamsForAnalytics();
     
     let html = '';
     activeTeams.forEach(team => {
@@ -2678,7 +2719,7 @@ function addParticipant(name, isBot = false, values = null, realRole = null) {
 function renderParamsMatrix() {
     const matrix = $('#params-matrix');
     if (!matrix) return;
-    const activeTeams = getActiveTeams();
+    const activeTeams = getTeamsForAnalytics();
     
     if (activeTeams.length === 0) {
         // Если участники есть, но команд нет — значит у участников не назначены команды (данные битые)
@@ -2764,7 +2805,7 @@ function renderParamsMatrix() {
 // Средние параметры и ИГС — ПО КОМАНДАМ
 function renderAvgParams() {
     const container = $('#avg-params');
-    const activeTeams = getActiveTeams();
+    const activeTeams = getTeamsForAnalytics();
     
     if (activeTeams.length === 0) {
         container.innerHTML = '<div class="empty-state">Нет данных</div>';
@@ -2809,7 +2850,7 @@ function renderAvgParams() {
 
 // Метрики — ПО КОМАНДАМ с ИГС
 function updateMetrics() {
-    const activeTeams = getActiveTeams();
+    const activeTeams = getTeamsForAnalytics();
     
     if (activeTeams.length < 1) {
         $('#metric-d').textContent = '—';
@@ -3264,7 +3305,7 @@ function getChartColor(index, alpha = 1) {
 function updateCharts() {
     if (!state.charts.radar || !state.charts.timeline) return;
     
-    const activeTeams = getActiveTeams();
+    const activeTeams = getTeamsForAnalytics();
     
     // Radar chart — компоненты ИГС по командам
     const datasets = activeTeams.map((team, i) => {
