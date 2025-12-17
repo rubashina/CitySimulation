@@ -1733,6 +1733,7 @@ h4 { font-size: 1rem; }
 .role-team.team-b { color: #f59e0b; background: rgba(245, 158, 11, 0.2); }
 .role-team.team-c { color: #ec4899; background: rgba(236, 72, 153, 0.2); }
 .role-team.team-d { color: #8b5cf6; background: rgba(139, 92, 246, 0.2); }
+.role-team.team-e { color: #3b82f6; background: rgba(59, 130, 246, 0.2); }
 
 .role-name {
     font-size: 1.5rem;
@@ -1780,6 +1781,7 @@ h4 { font-size: 1rem; }
 .team-card.team-b { border-left-color: #f59e0b; }
 .team-card.team-c { border-left-color: #ec4899; }
 .team-card.team-d { border-left-color: #8b5cf6; }
+.team-card.team-e { border-left-color: #3b82f6; }
 
 .team-name {
     font-size: 0.75rem;

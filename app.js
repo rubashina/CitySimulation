@@ -175,8 +175,10 @@ function handleLocalMessage(msg) {
             break;
         case 'participants_child_added':
             if (msg.participant && !state.participants.find(p => p.id === msg.participant.id)) {
-                state.participants.push(msg.participant);
-                if (msg.participant.team) initTeamData(msg.participant.team.id);
+                const participant = normalizeParticipant(msg.participant);
+                state.participants.push(participant);
+                const teamId = getParticipantTeamId(participant);
+                if (teamId) initTeamData(teamId);
                 if (state.user.isModerator) {
                     renderParticipantsList();
                     renderParamsMatrix();
@@ -228,9 +230,12 @@ function syncSessionFromLocal(data) {
         if (typeof data.phase === 'number') state.session.phase = data.phase;
     }
     if (data.participants) {
-        state.participants = Object.values(data.participants);
+        state.participants = Object.values(data.participants).map(normalizeParticipant);
         // Инициализация teamData для всех команд
-        state.participants.forEach(p => p.team && initTeamData(p.team.id));
+        state.participants.forEach(p => {
+            const teamId = getParticipantTeamId(p);
+            if (teamId) initTeamData(teamId);
+        });
     }
     if (data.teams) {
         state.teamsData = { ...state.teamsData, ...data.teams };
@@ -297,15 +302,14 @@ function subscribeToSession(sessionCode) {
                 // Очищаем список и загружаем заново
                 state.participants = [];
                 Object.keys(participants).forEach(participantId => {
-                    const participant = participants[participantId];
+                    const participant = normalizeParticipant(participants[participantId]);
                     console.log('  ➕ Добавляю участника:', participant.name);
                     if (!state.participants.find(p => p.id === participant.id)) {
                         state.participants.push(participant);
                         
                         // Инициализируем данные команды если нужно
-                        if (participant.team) {
-                            initTeamData(participant.team.id);
-                        }
+                        const teamId = getParticipantTeamId(participant);
+                        if (teamId) initTeamData(teamId);
                     }
                 });
                 
@@ -321,7 +325,7 @@ function subscribeToSession(sessionCode) {
     
     // Слушаем добавление новых участников
     sessionRef.child('participants').on('child_added', (snapshot) => {
-        const participant = snapshot.val();
+        const participant = normalizeParticipant(snapshot.val());
         console.log('🔔 child_added сработал! Участник:', participant?.name, 'Модератор?', state.user.isModerator);
         
         if (participant && !state.participants.find(p => p.id === participant.id)) {
@@ -329,9 +333,8 @@ function subscribeToSession(sessionCode) {
             state.participants.push(participant);
             
             // Инициализируем данные команды если нужно
-            if (participant.team) {
-                initTeamData(participant.team.id);
-            }
+            const teamId = getParticipantTeamId(participant);
+            if (teamId) initTeamData(teamId);
             
             if (state.user.isModerator) {
                 console.log('🔄 Обновляю UI модератора...');
@@ -855,13 +858,26 @@ const CONFIG = {
         { id: 'business', name: 'Предприниматель', desc: 'Вы представляете интересы бизнес-сообщества', icon: '💼' }
     ],
     
-    // Команды
+    // Команды (группы интересов в игре)
+    // ВАЖНО: id остаются короткими (a/b/c/...), чтобы не ломать старые данные,
+    // а отображаемые имена — «профессии/стороны», как в задании.
     teams: [
-        { id: 'a', name: 'Команда A', color: '#06d6a0' },
-        { id: 'b', name: 'Команда B', color: '#f59e0b' },
-        { id: 'c', name: 'Команда C', color: '#ec4899' },
-        { id: 'd', name: 'Команда D', color: '#8b5cf6' }
-    ]
+        { id: 'a', name: 'Архитекторы', color: '#06d6a0' },
+        { id: 'b', name: 'Активисты', color: '#f59e0b' },
+        { id: 'c', name: 'Жители', color: '#ec4899' },
+        { id: 'd', name: 'Предприниматели', color: '#8b5cf6' },
+        { id: 'e', name: 'Администрация', color: '#3b82f6' }
+    ],
+    
+    // Привязка игровой роли (которую «отстаивает» участник) к команде.
+    // Это делает команды осмысленными: команда = сторона интересов.
+    teamByGameRole: {
+        architect: 'a',
+        activist: 'b',
+        resident: 'c',
+        business: 'd',
+        admin: 'e'
+    }
 };
 
 // =====================================================
@@ -1078,6 +1094,46 @@ function calculateAverageIGS() {
 // УПРАВЛЕНИЕ КОМАНДАМИ
 // =====================================================
 
+// Нормализация team из данных (поддержка старых форматов):
+// - team может быть строкой (например "a")
+// - team может быть объектом без name/color (добиваем из CONFIG)
+function normalizeTeam(teamLike) {
+    if (!teamLike) return null;
+    
+    // Старый формат: строка-id
+    if (typeof teamLike === 'string') {
+        const id = teamLike;
+        const fromConfig = CONFIG.teams.find(t => t.id === id);
+        return fromConfig ? { ...fromConfig } : { id, name: `Команда ${String(id).toUpperCase()}`, color: '#64748b' };
+    }
+    
+    // Объект
+    if (typeof teamLike === 'object') {
+        const id = teamLike.id || teamLike.teamId || teamLike.code || null;
+        if (!id) return null;
+        const fromConfig = CONFIG.teams.find(t => t.id === id);
+        return {
+            id,
+            name: teamLike.name || fromConfig?.name || `Команда ${String(id).toUpperCase()}`,
+            color: teamLike.color || fromConfig?.color || '#64748b'
+        };
+    }
+    
+    return null;
+}
+
+function getParticipantTeamId(participant) {
+    if (!participant) return null;
+    if (typeof participant.team === 'string') return participant.team;
+    return participant.team?.id || null;
+}
+
+function normalizeParticipant(participant) {
+    if (!participant) return participant;
+    const team = normalizeTeam(participant.team);
+    return { ...participant, team };
+}
+
 // Инициализация данных команды
 function initTeamData(teamId) {
     if (!state.teamsData[teamId]) {
@@ -1111,15 +1167,16 @@ function getTeamData(teamId) {
 // Проверить, является ли участник капитаном своей команды
 function isCaptain(participantId) {
     const participant = state.participants.find(p => p.id === participantId);
-    if (!participant || !participant.team) return false;
+    const teamId = getParticipantTeamId(participant);
+    if (!participant || !teamId) return false;
     
-    const teamData = getTeamData(participant.team.id);
+    const teamData = getTeamData(teamId);
     return teamData.captainId === participantId;
 }
 
 // Назначить капитана команды (случайно из членов команды)
 function assignTeamCaptain(teamId) {
-    const teamMembers = state.participants.filter(p => p.team?.id === teamId);
+    const teamMembers = state.participants.filter(p => getParticipantTeamId(p) === teamId);
     if (teamMembers.length === 0) return;
     
     const teamData = getTeamData(teamId);
@@ -1139,13 +1196,25 @@ function assignTeamCaptain(teamId) {
 
 // Получить участников команды
 function getTeamMembers(teamId) {
-    return state.participants.filter(p => p.team?.id === teamId);
+    return state.participants.filter(p => getParticipantTeamId(p) === teamId);
 }
 
 // Получить активные команды (с участниками)
 function getActiveTeams() {
-    const activeTeamIds = [...new Set(state.participants.map(p => p.team?.id).filter(Boolean))];
-    return CONFIG.teams.filter(t => activeTeamIds.includes(t.id));
+    const activeTeamIds = [...new Set(state.participants.map(getParticipantTeamId).filter(Boolean))];
+    const activeSet = new Set(activeTeamIds);
+    
+    // Сначала — команды из CONFIG (в заданном порядке), затем — «неизвестные» (из данных)
+    const fromConfig = CONFIG.teams.filter(t => activeSet.has(t.id));
+    const extras = activeTeamIds
+        .filter(id => !CONFIG.teams.find(t => t.id === id))
+        .map(id => {
+            // пытаемся взять объект команды из участника (если он есть), иначе делаем заглушку
+            const fromParticipant = state.participants.find(p => getParticipantTeamId(p) === id)?.team;
+            return normalizeTeam(fromParticipant) || normalizeTeam(id) || { id, name: `Команда ${String(id).toUpperCase()}`, color: '#64748b' };
+        });
+    
+    return [...fromConfig, ...extras];
 }
 
 // =====================================================
@@ -1350,7 +1419,7 @@ function completeJoinSession(code, name, realRole) {
                 console.log('👥 Загружаю существующих участников перед подключением:', Object.keys(existingParticipants).length);
                 state.participants = [];
                 Object.values(existingParticipants).forEach(p => {
-                    state.participants.push(p);
+                    state.participants.push(normalizeParticipant(p));
                 });
             }
             
@@ -1365,16 +1434,29 @@ function completeJoinSession(code, name, realRole) {
 function completeJoinSessionStep2(code, name, realRole) {
     // Назначаем игровую роль (ОТЛИЧНУЮ от реальной)
     const availableGameRoles = CONFIG.gameRoles.filter(r => r.id !== realRole);
-    const assignedRole = availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)];
+    
+    // Подбираем роль так, чтобы команды были более-менее сбалансированы,
+    // а команда соответствовала «стороне» (роль → teamByGameRole).
+    const roleCandidates = availableGameRoles
+        .map(role => {
+            const teamId = CONFIG.teamByGameRole?.[role.id] || null;
+            const count = teamId ? state.participants.filter(p => getParticipantTeamId(p) === teamId).length : Number.MAX_SAFE_INTEGER;
+            return { role, teamId, count };
+        })
+        .filter(x => x.teamId);
+    
+    roleCandidates.sort((a, b) => a.count - b.count);
+    const chosen = roleCandidates.length > 0
+        ? roleCandidates[0]
+        : { role: availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)], teamId: null, count: 0 };
+    
+    const assignedRole = chosen.role;
     state.user.gameRole = assignedRole;
     
-    // Назначаем команду (равномерно распределяем)
-    const teamCounts = CONFIG.teams.map(t => ({
-        team: t,
-        count: state.participants.filter(p => p.team?.id === t.id).length
-    }));
-    teamCounts.sort((a, b) => a.count - b.count);
-    const assignedTeam = teamCounts[0].team;
+    // Команда соответствует игровой роли (стороне интересов)
+    const teamIdFromRole = chosen.teamId || CONFIG.teamByGameRole?.[assignedRole.id] || null;
+    const assignedTeam = (teamIdFromRole ? CONFIG.teams.find(t => t.id === teamIdFromRole) : null)
+        || CONFIG.teams[0];
     state.user.team = assignedTeam;
     
     // Инициализируем параметры из новой структуры
@@ -2418,15 +2500,23 @@ function addParticipant(name, isBot = false, values = null, realRole = null) {
     
     // Игровая роль отличается от реальной
     const availableGameRoles = CONFIG.gameRoles.filter(r => r.id !== assignedRealRole);
-    const assignedGameRole = availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)];
     
-    // Назначаем команду (распределяем равномерно)
-    const teamCounts = CONFIG.teams.map(t => ({
-        team: t,
-        count: state.participants.filter(p => p.team?.id === t.id).length
-    }));
-    teamCounts.sort((a, b) => a.count - b.count);
-    const assignedTeam = teamCounts[0].team;
+    // Выбираем игровую роль так, чтобы команды были более-менее сбалансированы
+    const roleCandidates = availableGameRoles
+        .map(role => {
+            const teamId = CONFIG.teamByGameRole?.[role.id] || null;
+            const count = teamId ? state.participants.filter(p => getParticipantTeamId(p) === teamId).length : Number.MAX_SAFE_INTEGER;
+            return { role, teamId, count };
+        })
+        .filter(x => x.teamId);
+    roleCandidates.sort((a, b) => a.count - b.count);
+    
+    const chosen = roleCandidates.length > 0
+        ? roleCandidates[0]
+        : { role: availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)], teamId: null, count: 0 };
+    
+    const assignedGameRole = chosen.role;
+    const assignedTeam = (chosen.teamId ? CONFIG.teams.find(t => t.id === chosen.teamId) : null) || CONFIG.teams[0];
     
     // Инициализируем данные команды, если нужно
     initTeamData(assignedTeam.id);
