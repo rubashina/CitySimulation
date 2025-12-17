@@ -254,11 +254,36 @@ function initFirebase() {
         firebaseDB = firebase.database();
         firebaseEnabled = true;
         console.log('✅ Firebase подключен');
+        
+        // Диагностика соединения (Realtime Database)
+        try {
+            firebaseDB.ref('.info/connected').on('value', (snap) => {
+                const connected = !!snap.val();
+                console.log('🌐 Firebase connected:', connected);
+                if (!connected) {
+                    // Не спамим — показываем мягкое предупреждение
+                    showNotification('Нет соединения с Firebase. Проверьте интернет или доступ к сервису.', 'warning');
+                }
+            });
+        } catch (e) {
+            console.warn('⚠️ Не удалось подписаться на .info/connected:', e);
+        }
+        
         return true;
     } catch (error) {
         console.error('❌ Ошибка Firebase:', error);
         return false;
     }
+}
+
+function withTimeout(promise, ms, timeoutMessage = 'Таймаут операции') {
+    let t = null;
+    const timeout = new Promise((_, reject) => {
+        t = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (t) clearTimeout(t);
+    });
 }
 
 // =====================================================
@@ -496,6 +521,13 @@ function saveSessionToFirebase() {
         console.log('✅ Сессия сохранена в Firebase');
     }).catch((error) => {
         console.error('❌ Ошибка сохранения сессии:', error);
+        if (isFirebasePermissionDenied(error)) {
+            const msg = 'Не удалось сохранить сессию в Firebase (PERMISSION_DENIED). Проверьте Rules в Realtime Database: запись/чтение сейчас запрещены для неавторизованных пользователей.';
+            showNotification(msg, 'error', 20000);
+            showCritical(msg, error);
+        } else {
+            showNotification('Не удалось сохранить сессию в Firebase. Проверьте соединение и попробуйте снова.', 'error', 12000);
+        }
     });
 }
 
@@ -529,6 +561,11 @@ function saveParticipantToFirebase(participant) {
         console.log('✅ Участник сохранён в Firebase:', participant.name);
     }).catch((error) => {
         console.error('❌ Ошибка сохранения участника:', error);
+        if (isFirebasePermissionDenied(error)) {
+            const msg = 'Firebase запрещает сохранять участника (PERMISSION_DENIED). Проверьте Rules в Realtime Database.';
+            showNotification(msg, 'error', 20000);
+            showCritical(msg, error);
+        }
     });
 }
 
@@ -564,6 +601,11 @@ function saveTeamToFirebase(teamId) {
         console.log(`✅ Команда ${teamId} сохранена в Firebase`);
     }).catch((error) => {
         console.error(`❌ Ошибка сохранения команды ${teamId}:`, error);
+        if (isFirebasePermissionDenied(error)) {
+            const msg = 'Firebase запрещает сохранять команды (PERMISSION_DENIED). Проверьте Rules в Realtime Database.';
+            showNotification(msg, 'error', 20000);
+            showCritical(msg, error);
+        }
     });
 }
 
@@ -989,11 +1031,34 @@ function getInitials(name) {
 }
 
 function $(selector) {
-    return document.querySelector(selector);
+    if (!selector) return null;
+    // В коде исторически используется $('#some-id') БЕЗ '#'.
+    // Делаем функцию устойчивой: если это похоже на id — берём getElementById.
+    if (typeof selector === 'string') {
+        const s = selector.trim();
+        const startsLikeCss = s.startsWith('#') || s.startsWith('.') || s.startsWith('[');
+        const looksComplex = s.includes(' ') || s.includes('>') || s.includes(':') || s.includes(',') || s.includes('[');
+        if (!startsLikeCss && !looksComplex) {
+            return document.getElementById(s) || document.querySelector(s);
+        }
+        return document.querySelector(s);
+    }
+    return null;
 }
 
 function $$(selector) {
     return document.querySelectorAll(selector);
+}
+
+function onEl(el, eventName, handler, options) {
+    if (!el || !el.addEventListener) return false;
+    el.addEventListener(eventName, handler, options);
+    return true;
+}
+
+function onId(idOrSelector, eventName, handler, options) {
+    const el = $(idOrSelector);
+    return onEl(el, eventName, handler, options);
 }
 
 // =====================================================
@@ -1201,7 +1266,9 @@ function getTeamMembers(teamId) {
 
 // Получить активные команды (с участниками)
 function getActiveTeams() {
-    const activeTeamIds = [...new Set(state.participants.map(getParticipantTeamId).filter(Boolean))];
+    const idsFromParticipants = state.participants.map(getParticipantTeamId).filter(Boolean);
+    const idsFromTeamsData = Object.keys(state.teamsData || {});
+    const activeTeamIds = [...new Set([...idsFromParticipants, ...idsFromTeamsData])];
     const activeSet = new Set(activeTeamIds);
     
     // Сначала — команды из CONFIG (в заданном порядке), затем — «неизвестные» (из данных)
@@ -1221,7 +1288,7 @@ function getActiveTeams() {
 // УВЕДОМЛЕНИЯ
 // =====================================================
 
-function showNotification(message, type = 'info') {
+function showNotification(message, type = 'info', durationMs = null) {
     const container = $('#notifications');
     const icons = {
         success: '✓',
@@ -1229,6 +1296,14 @@ function showNotification(message, type = 'info') {
         warning: '⚠',
         info: 'ℹ'
     };
+    
+    const defaultDuration = {
+        success: 4500,
+        info: 5000,
+        warning: 8000,
+        error: 12000
+    };
+    const ttl = typeof durationMs === 'number' ? durationMs : (defaultDuration[type] ?? 5000);
     
     const notification = document.createElement('div');
     notification.className = `notification ${type}`;
@@ -1243,7 +1318,23 @@ function showNotification(message, type = 'info') {
         notification.style.opacity = '0';
         notification.style.transform = 'translateX(100px)';
         setTimeout(() => notification.remove(), 300);
-    }, 4000);
+    }, ttl);
+}
+
+function isFirebasePermissionDenied(err) {
+    const code = err?.code || '';
+    const msg = (err?.message || String(err || '')).toLowerCase();
+    return code === 'PERMISSION_DENIED' || msg.includes('permission_denied') || msg.includes('permission denied');
+}
+
+function showCritical(message, error = null) {
+    console.error('❌ CRITICAL:', message, error);
+    // alert — чтобы пользователь точно увидел проблему (особенно на GitHub Pages)
+    try {
+        const details = error?.code ? `\n\nКод: ${error.code}` : '';
+        const text = `${message}${details}`;
+        alert(text);
+    } catch (_) {}
 }
 
 // =====================================================
@@ -1350,7 +1441,11 @@ function joinSession(code, name, realRole) {
     // Если Firebase включен - сначала проверяем существование сессии
     if (firebaseEnabled) {
         const sessionRef = firebaseDB.ref(`sessions/${code}`);
-        return sessionRef.once('value').then((snapshot) => {
+        
+        // Иногда при плохом интернете запрос может «повиснуть» без ошибки.
+        // Делаем таймаут, чтобы пользователь не застревал на "Подключаюсь…".
+        return withTimeout(sessionRef.once('value'), 8000, 'Не удалось подключиться к Firebase (таймаут)')
+        .then((snapshot) => {
             const sessionData = snapshot.val();
             
             if (!sessionData) {
@@ -1376,7 +1471,22 @@ function joinSession(code, name, realRole) {
             return true;
         }).catch((error) => {
             console.error('❌ Ошибка Firebase:', error);
-            showNotification('Ошибка подключения. Попробуйте снова.', 'error');
+            const offlineHint = (typeof navigator !== 'undefined' && navigator && navigator.onLine === false)
+                ? ' Похоже, нет интернета.'
+                : '';
+            
+            // Самая частая причина на GitHub Pages: правила Realtime Database закрыты (PERMISSION_DENIED)
+            if (isFirebasePermissionDenied(error)) {
+                const msg = 'Нет доступа к Firebase (PERMISSION_DENIED). Скорее всего, правила Realtime Database запрещают чтение/запись без авторизации (часто после окончания test mode). Откройте правила в Firebase Console или включите авторизацию/анонимный доступ.';
+                showNotification(msg, 'error', 20000);
+                showCritical(msg, error);
+            } else if ((error?.message || '').toLowerCase().includes('таймаут')) {
+                const msg = `Firebase не отвечает (таймаут). Проверьте доступ к доменам googleapis/gstatic/firebase и корпоративные блокировки.${offlineHint}`;
+                showNotification(msg, 'error', 20000);
+                showCritical(msg, error);
+            } else {
+                showNotification(`Ошибка подключения.${offlineHint} Попробуйте снова.`, 'error', 12000);
+            }
             throw error;
         });
     } else {
@@ -1758,16 +1868,29 @@ function renderParameters() {
                         used.push(param.id);
                     }
                     
+                    // Пытаемся применить изменение с учётом бюджета
+                    const teamParamData = teamDataNow.parameters.find(p => p.id === param.id);
+                    const prevValue = teamParamData ? teamParamData.value : value;
+                    
+                    if (teamParamData) teamParamData.value = newValue;
+                    const budgetUsed = calculateBudgetUsed(teamDataNow.parameters);
+                    const budgetTotal = state.session.budgetTotal;
+                    
+                    if (budgetUsed > budgetTotal) {
+                        // Откат (нельзя выйти за бюджет)
+                        if (teamParamData) teamParamData.value = prevValue;
+                        e.target.value = String(prevValue);
+                        card.querySelector(`#value-${param.id}`).textContent = prevValue + param.unit;
+                        showNotification(`Недостаточно бюджета: ${budgetUsed} / ${budgetTotal}. Откат изменения.`, 'error');
+                        updateIGSDisplay();
+                        updateConfirmButton();
+                        return;
+                    }
+                    
                     card.querySelector(`#value-${param.id}`).textContent = newValue + param.unit;
                     
-                    // Обновляем данные команды
-                    if (teamDataNow) {
-                        const teamParamData = teamDataNow.parameters.find(p => p.id === param.id);
-                        if (teamParamData) teamParamData.value = newValue;
-                        
-                        // Синхронизируем с Firebase (с debounce)
-                        debounceSaveTeam(state.user.team.id);
-                    }
+                    // Синхронизируем с Firebase (с debounce)
+                    debounceSaveTeam(state.user.team.id);
                     
                     // Обновляем ИГС в реальном времени
                     updateIGSDisplay();
@@ -1849,12 +1972,15 @@ function calculateBudgetUsed(parameters) {
         const paramDef = allParams.find(def => def.id === p.id);
         if (paramDef) {
             const delta = p.value - paramDef.default;
-            const paramCost = CONFIG.parameterCosts[p.id] || 10;
+            // Бюджет должен "расходоваться" при изменениях, поэтому стоимость всегда положительная.
+            // (Если когда-то нужно будет "экономию", это лучше делать отдельной механикой, а не отрицательной стоимостью.)
+            const rawCost = CONFIG.parameterCosts[p.id] ?? 10;
+            const paramCost = Math.abs(rawCost);
             cost += Math.abs(delta) * paramCost / 10;
         }
     });
     
-    return Math.round(cost);
+    return Math.max(0, Math.round(cost));
 }
 
 // Обновление Hero-дисплея ИГС (как в En-ROADS)
@@ -1870,12 +1996,8 @@ function updateIGSHero() {
     if (!teamData) return;
     
     const igs = calculateIGS(teamData.parameters);
-    // Бюджет как ограничение "ходов": сколько разных ползунков можно тронуть за фазу ввода
-    const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
-    const currentPhase = Number(state.session.phase);
-    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
-    const movesUsed = (teamData.movesPhase === currentPhase && Array.isArray(teamData.movesUsed)) ? teamData.movesUsed.length : 0;
-    const budgetUsed = isInputPhase ? Math.round((movesUsed / Math.max(1, moveLimit)) * state.session.budgetTotal) : calculateBudgetUsed(teamData.parameters);
+    // Бюджет — реальная стоимость изменения параметров относительно дефолта
+    const budgetUsed = calculateBudgetUsed(teamData.parameters);
     const budgetTotal = state.session.budgetTotal;
     
     heroValue.textContent = igs.total.toFixed(1);
@@ -2111,12 +2233,14 @@ function renderHistory() {
 // =====================================================
 
 function initModeratorScreen() {
-    updateModeratorHeader();
-    initModeratorTabs();
-    initPhaseControls();
-    initEventEditor();
-    initModeratorActions();
-    initExportModal();
+    // Важно: модераторский UI должен отрисовываться даже если какой-то блок не инициализировался
+    // (например, в старой версии index.html нет части кнопок).
+    try { updateModeratorHeader(); } catch (e) { console.error('❌ updateModeratorHeader failed', e); }
+    try { initModeratorTabs(); } catch (e) { console.error('❌ initModeratorTabs failed', e); }
+    try { initPhaseControls(); } catch (e) { console.error('❌ initPhaseControls failed', e); }
+    try { initEventEditor(); } catch (e) { console.error('❌ initEventEditor failed', e); }
+    try { initModeratorActions(); } catch (e) { console.error('❌ initModeratorActions failed', e); }
+    try { initExportModal(); } catch (e) { console.error('❌ initExportModal failed', e); }
     
     // Гарантируем, что видна матрица по умолчанию
     try {
@@ -2128,10 +2252,11 @@ function initModeratorScreen() {
         if (matrixPanel) matrixPanel.classList.add('active');
     } catch (_) {}
     
-    renderParticipantsList();
-    renderParamsMatrix();
-    renderAvgParams();
-    initCharts();
+    // Рендер — всегда
+    try { renderParticipantsList(); } catch (e) { console.error('❌ renderParticipantsList failed', e); }
+    try { renderParamsMatrix(); } catch (e) { console.error('❌ renderParamsMatrix failed', e); }
+    try { renderAvgParams(); } catch (e) { console.error('❌ renderAvgParams failed', e); }
+    try { initCharts(); } catch (e) { console.error('❌ initCharts failed', e); }
 
     // Подстраховка: прокрутить к матрице, если пользователь "видит только участников"
     setTimeout(() => {
@@ -2170,7 +2295,7 @@ function initModeratorTabs() {
 
 // Управление фазами (только вперёд!)
 function initPhaseControls() {
-    $('#next-phase').addEventListener('click', () => {
+    onId('next-phase', 'click', () => {
         if (state.session.phase < CONFIG.phases.length - 1) {
             const oldPhase = state.session.phase;
             state.session.phase++;
@@ -2199,9 +2324,10 @@ function initPhaseControls() {
         }
     });
     
-    $('#pause-btn').addEventListener('click', () => {
+    onId('pause-btn', 'click', () => {
         state.session.isPaused = !state.session.isPaused;
         const btn = $('#pause-btn');
+        if (!btn) return;
         
         if (state.session.isPaused) {
             btn.innerHTML = `
@@ -2716,25 +2842,29 @@ function initEventEditor() {
         btn.addEventListener('click', () => {
             const template = CONFIG.eventTemplates[btn.dataset.template];
             if (template) {
-                $('#event-name-input').value = template.name;
-                $('#event-desc-input').value = template.desc;
-                $('#event-effect-select').value = template.effect;
+                const nameInput = $('#event-name-input');
+                const descInput = $('#event-desc-input');
+                const effectSelect = $('#event-effect-select');
+                if (nameInput) nameInput.value = template.name;
+                if (descInput) descInput.value = template.desc;
+                if (effectSelect) effectSelect.value = template.effect;
                 updateEffectParams(template.effect, template.params);
             }
         });
     });
     
     // Изменение эффекта
-    $('#event-effect-select').addEventListener('change', (e) => {
-        updateEffectParams(e.target.value);
+    onId('event-effect-select', 'change', (e) => {
+        updateEffectParams(e?.target?.value);
     });
     
     // Отправка события
-    $('#send-event-btn').addEventListener('click', sendEvent);
+    onId('send-event-btn', 'click', sendEvent);
 }
 
 function updateEffectParams(effect, defaultParams = {}) {
     const container = $('#effect-params');
+    if (!container) return;
     
     if (effect === 'none' || effect === 'lock_all') {
         container.innerHTML = '';
@@ -2769,9 +2899,9 @@ function updateEffectParams(effect, defaultParams = {}) {
 }
 
 function sendEvent() {
-    const name = $('#event-name-input').value.trim();
-    const desc = $('#event-desc-input').value.trim();
-    const effect = $('#event-effect-select').value;
+    const name = $('#event-name-input')?.value?.trim?.() || '';
+    const desc = $('#event-desc-input')?.value?.trim?.() || '';
+    const effect = $('#event-effect-select')?.value || 'none';
     
     if (!name || !desc) {
         showNotification('Заполните название и описание события', 'error');
@@ -2784,7 +2914,9 @@ function sendEvent() {
         desc,
         effect,
         params: {},
-        time: new Date()
+        time: new Date().toISOString(),
+        phase: state.session.phase,
+        from: state.user?.name || 'Модератор'
     };
     
     // Получаем параметры эффекта
@@ -2794,8 +2926,8 @@ function sendEvent() {
     if (paramSelect) event.params.parameter = paramSelect.value;
     if (valueInput) event.params.value = parseInt(valueInput.value);
     
-    // Применяем эффект
-    applyEventEffect(event);
+    // Модератору не применяем эффект локально — иначе он может случайно "залочить" себе UI.
+    // Эффект применяют участники при получении события.
 
     // Отправляем событие участникам (Firebase / local)
     console.log('📣 sendEvent: отправляю событие участникам', {
@@ -2806,6 +2938,7 @@ function sendEvent() {
     });
     if (!state.session.code) {
         console.warn('⚠️ sendEvent: нет кода сессии');
+        showNotification('Нет кода сессии — событие не отправлено', 'error');
     } else if (!firebaseEnabled) {
         localBroadcast({ type: 'event', code: state.session.code, event });
     } else {
@@ -2814,11 +2947,17 @@ function sendEvent() {
                 console.log('✅ sendEvent: событие записано в Firebase');
             }).catch((e) => {
                 console.error('❌ Ошибка отправки события в Firebase:', e);
-                showNotification('Не удалось отправить событие', 'error');
+                const msg = isFirebasePermissionDenied(e)
+                    ? 'Не удалось отправить событие: Firebase Rules запрещают запись (PERMISSION_DENIED).'
+                    : 'Не удалось отправить событие. Проверьте соединение/Firebase.';
+                showNotification(msg, 'error', 20000);
+                showCritical(msg, e);
             });
         } catch (e) {
             console.error('❌ Ошибка отправки события в Firebase:', e);
-            showNotification('Не удалось отправить событие', 'error');
+            const msg = 'Не удалось отправить событие (ошибка в клиенте). Откройте консоль для деталей.';
+            showNotification(msg, 'error', 20000);
+            showCritical(msg, e);
         }
     }
     
@@ -2827,10 +2966,14 @@ function sendEvent() {
     showNotification('Событие отправлено участникам', 'success');
     
     // Очищаем форму
-    $('#event-name-input').value = '';
-    $('#event-desc-input').value = '';
-    $('#event-effect-select').value = 'none';
-    $('#effect-params').innerHTML = '';
+    const nameInput = $('#event-name-input');
+    const descInput = $('#event-desc-input');
+    const effectSelect = $('#event-effect-select');
+    const effectParams = $('#effect-params');
+    if (nameInput) nameInput.value = '';
+    if (descInput) descInput.value = '';
+    if (effectSelect) effectSelect.value = 'none';
+    if (effectParams) effectParams.innerHTML = '';
 }
 
 function applyEventEffect(event) {
@@ -2873,7 +3016,7 @@ function applyEventEffect(event) {
 // Действия модератора
 function initModeratorActions() {
     // Добавить бота
-    $('#add-bot-btn').addEventListener('click', () => {
+    onId('add-bot-btn', 'click', () => {
         const usedNames = state.participants.map(p => p.name);
         const availableNames = CONFIG.botNames.filter(n => !usedNames.includes(n));
         const name = availableNames.length > 0 
@@ -2885,7 +3028,7 @@ function initModeratorActions() {
     });
     
     // Сбросить параметры
-    $('#reset-all-btn').addEventListener('click', () => {
+    onId('reset-all-btn', 'click', () => {
         // Сбрасываем параметры всех команд
         const allParams = getAllParameters();
         Object.keys(state.teamsData).forEach(teamId => {
@@ -2905,7 +3048,7 @@ function initModeratorActions() {
     });
     
     // Разблокировать всё
-    $('#unlock-all-btn').addEventListener('click', () => {
+    onId('unlock-all-btn', 'click', () => {
         state.locks = {};
         state.constraints = {};
         addToLog('action', 'Все ограничения сняты');
@@ -2913,7 +3056,7 @@ function initModeratorActions() {
     });
     
     // Принять за всех
-    $('#force-confirm-btn').addEventListener('click', () => {
+    onId('force-confirm-btn', 'click', () => {
         state.participants.forEach(p => p.confirmed = true);
         renderParticipantsList();
         updateMetrics();
@@ -2922,23 +3065,24 @@ function initModeratorActions() {
     });
     
     // Отправить сообщение
-    $('#send-broadcast').addEventListener('click', () => {
-        const message = $('#broadcast-message').value.trim();
+    onId('send-broadcast', 'click', () => {
+        const msgEl = $('#broadcast-message');
+        const message = msgEl?.value?.trim?.() || '';
         if (message) {
             sendBroadcastMessage(message);
             showNotification('Сообщение отправлено', 'success');
-            $('#broadcast-message').value = '';
+            if (msgEl) msgEl.value = '';
         }
     });
     
     // Очистить лог
-    $('#clear-log').addEventListener('click', () => {
+    onId('clear-log', 'click', () => {
         state.log = [];
         renderLog();
     });
     
     // Экспорт лога
-    $('#export-log').addEventListener('click', () => {
+    onId('export-log', 'click', () => {
         const text = state.log.map(e => `[${formatTime(e.time)}] ${e.message}`).join('\n');
         downloadFile('log.txt', text);
     });
@@ -3188,12 +3332,13 @@ function updateCharts() {
 // Модальное окно экспорта
 function initExportModal() {
     const modal = $('#export-modal');
+    if (!modal) return;
     
-    $('#export-menu-btn').addEventListener('click', () => {
+    onId('export-menu-btn', 'click', () => {
         modal.classList.remove('hidden');
     });
     
-    modal.querySelector('.modal-close').addEventListener('click', () => {
+    onEl(modal.querySelector('.modal-close'), 'click', () => {
         modal.classList.add('hidden');
     });
     
