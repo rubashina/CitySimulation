@@ -4214,6 +4214,18 @@ document.addEventListener('DOMContentLoaded', () => {
         // делаем делегирование кликов на уровне документа.
         document.addEventListener('click', (e) => {
             try {
+                // Переключение вкладок логина (join/create) — всегда доступно
+                const tabBtn = e?.target?.closest?.('.login-tabs .tab-btn');
+                if (tabBtn && tabBtn.dataset?.tab && state.mode === 'login') {
+                    const tab = tabBtn.dataset.tab;
+                    $$('.login-tabs .tab-btn').forEach(b => b.classList.toggle('active', b === tabBtn));
+                    const joinForm = $('#join-form');
+                    const createForm = $('#create-form');
+                    if (joinForm?.classList) joinForm.classList.toggle('hidden', tab !== 'join');
+                    if (createForm?.classList) createForm.classList.toggle('hidden', tab !== 'create');
+                    return;
+                }
+
                 const t = e?.target;
                 if (!t || !t.id) return;
                 if (t.id !== 'create-btn' && t.id !== 'join-btn') return;
