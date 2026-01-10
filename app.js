@@ -4205,13 +4205,13 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
         try { window.__CITYSIM_BOOT = true; } catch (_) {}
         console.log('🚀 Инициализация симулятора...');
-        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-6');
+        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-7');
         console.log('📊 Категорий параметров:', CONFIG.parameterCategories.length);
         console.log('👥 Команд:', CONFIG.teams.length);
 
         try {
             const badge = document.getElementById('build-badge');
-            if (badge) badge.textContent = 'Build: 20260110-6 · JS: OK';
+            if (badge) badge.textContent = 'Build: 20260110-7 · JS: OK';
         } catch (_) {}
         
         // Инициализируем Firebase
