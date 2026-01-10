@@ -4201,7 +4201,7 @@ function downloadFile(filename, content, mimeType = 'text/plain;charset=utf-8') 
 document.addEventListener('DOMContentLoaded', () => {
     try {
         console.log('🚀 Инициализация симулятора...');
-        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-1');
+        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-2');
         console.log('📊 Категорий параметров:', CONFIG.parameterCategories.length);
         console.log('👥 Команд:', CONFIG.teams.length);
         
