@@ -2005,6 +2005,7 @@ function initParticipantScreen() {
     renderRoleCard();
     renderParameters();
     initHistoryPanel();
+    initTeamPanel();
     initTerritoryMapControls();
     
     // Инициализируем ИГС Hero
@@ -2031,6 +2032,21 @@ function initParticipantScreen() {
     $('#confirm-btn').addEventListener('click', confirmDecision);
 }
 
+function initTeamPanel() {
+    const openBtn = $('#p-team-toggle');
+    const closeBtn = $('#team-close');
+    const panel = $('#team-panel');
+    if (openBtn && panel) {
+        openBtn.addEventListener('click', () => {
+            panel.classList.add('open');
+            renderTeamMembersList();
+        });
+    }
+    if (closeBtn && panel) {
+        closeBtn.addEventListener('click', () => panel.classList.remove('open'));
+    }
+}
+
 function renderRoleCard() {
     const roleCard = $('#role-card');
     const gameRole = state.user.gameRole;
@@ -2055,26 +2071,49 @@ function renderRoleCard() {
 function renderTeamMembersList() {
     const list = $('#team-members-list');
     const title = $('#team-members-title');
-    if (!list) return;
+    const panelList = $('#team-panel-list');
+    if (!list && !panelList) return;
     const teamId = state.user?.team?.id;
     if (!teamId) {
-        list.innerHTML = '<div class="team-member-empty">Команда не определена</div>';
+        if (list) list.innerHTML = '<div class="team-member-empty">Команда не определена</div>';
+        if (panelList) panelList.innerHTML = '<div class="team-member-empty">Команда не определена</div>';
         return;
     }
-    const members = getTeamMembers(teamId)
-        .filter(p => p && p.id !== state.user.id)
+    const all = getTeamMembers(teamId).filter(p => p && p.id);
+    const me = all.find(p => p.id === state.user.id) || null;
+    const others = all
+        .filter(p => p.id !== state.user.id)
         .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru'));
+    const members = me ? [me, ...others] : others;
 
-    if (title) title.textContent = `Сокомандники (${members.length + 1})`;
+    if (title) title.textContent = `Сокомандники (${members.length})`;
 
     if (members.length === 0) {
-        list.innerHTML = '<div class="team-member-empty">Пока вы один(а) в команде</div>';
+        if (list) list.innerHTML = '<div class="team-member-empty">Пока вы один(а) в команде</div>';
+        if (panelList) panelList.innerHTML = '<div class="team-member-empty">Пока вы один(а) в команде</div>';
         return;
     }
-    list.innerHTML = members.map(m => {
+    const rows = members.map(m => {
         const captainBadge = isCaptain(m.id) ? '👑 ' : '';
-        return `<div class="team-member-row">${captainBadge}${escapeHtml(m.name || 'Без имени')}</div>`;
+        const you = (m.id === state.user.id) ? ' (вы)' : '';
+        return `<div class="team-member-row">${captainBadge}${escapeHtml(m.name || 'Без имени')}${escapeHtml(you)}</div>`;
     }).join('');
+    if (list) list.innerHTML = rows;
+
+    if (panelList) {
+        panelList.innerHTML = members.map(m => {
+            const captainBadge = isCaptain(m.id) ? '👑 ' : '';
+            const you = (m.id === state.user.id) ? ' (вы)' : '';
+            const realRole = CONFIG.realRoles[m.realRole]?.name || '-';
+            const gameRole = m.gameRole?.name || '-';
+            return `
+                <div class="team-panel-item">
+                    <div class="name">${captainBadge}${escapeHtml(m.name || 'Без имени')}${escapeHtml(you)}</div>
+                    <div class="meta">${escapeHtml(realRole)} · ${escapeHtml(gameRole)}</div>
+                </div>
+            `;
+        }).join('');
+    }
 }
 
 function escapeHtml(str) {

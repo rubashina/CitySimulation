@@ -1007,6 +1007,46 @@ h4 { font-size: 1rem; }
     right: 0;
 }
 
+/* Team Panel (participant) */
+.team-panel {
+    position: fixed;
+    top: 0;
+    right: -400px;
+    width: 400px;
+    height: 100vh;
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    z-index: 300;
+    transition: right var(--transition-normal);
+    overflow-y: auto;
+}
+
+.team-panel.open {
+    right: 0;
+}
+
+.team-panel-list {
+    padding: 1rem;
+}
+
+.team-panel-item {
+    padding: 0.9rem 1rem;
+    margin-bottom: 0.75rem;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    border-left: 3px solid var(--accent);
+}
+
+.team-panel-item .name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.team-panel-item .meta {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
 .panel-header {
     display: flex;
     justify-content: space-between;

@@ -144,6 +144,14 @@
                 </div>
                 <div class="header-right">
                     <span class="user-name" id="p-user-name"></span>
+                    <button class="btn btn-icon" id="p-team-toggle" title="Команда">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/>
+                            <circle cx="9" cy="7" r="4"/>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                        </svg>
+                    </button>
                     <button class="btn btn-icon" id="p-history-toggle" title="История">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"/>
@@ -313,6 +321,20 @@
                 <div class="history-list" id="history-list">
                     <!-- Генерируется JS -->
                 </div>
+            </aside>
+
+            <!-- Боковая панель команды (для участника) -->
+            <aside class="team-panel" id="team-panel">
+                <div class="panel-header">
+                    <h3>Моя команда</h3>
+                    <button class="btn btn-icon" id="team-close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="team-panel-list" id="team-panel-list"></div>
             </aside>
         </div>
         
