@@ -1717,6 +1717,12 @@ function initLoginScreen() {
     
     // Демо-режим
     $('#demo-btn').addEventListener('click', startDemo);
+
+    // Маркер: обработчики логина навешаны
+    try {
+        if (!state.ui) state.ui = { categoryOpen: {} };
+        state.ui.loginHandlersReady = true;
+    } catch (_) {}
 }
 
 function joinSession(code, name, realRole) {
@@ -4195,6 +4201,7 @@ function downloadFile(filename, content, mimeType = 'text/plain;charset=utf-8') 
 document.addEventListener('DOMContentLoaded', () => {
     try {
         console.log('🚀 Инициализация симулятора...');
+        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-1');
         console.log('📊 Категорий параметров:', CONFIG.parameterCategories.length);
         console.log('👥 Команд:', CONFIG.teams.length);
         
@@ -4202,6 +4209,21 @@ document.addEventListener('DOMContentLoaded', () => {
         initFirebase();
         
         initLoginScreen();
+        
+        // Страховка: если по какой-то причине initLoginScreen не навесил handlers,
+        // делаем делегирование кликов на уровне документа.
+        document.addEventListener('click', (e) => {
+            try {
+                const t = e?.target;
+                if (!t || !t.id) return;
+                if (t.id !== 'create-btn' && t.id !== 'join-btn') return;
+                if (state.mode !== 'login') return;
+                if (state.ui?.loginHandlersReady) return;
+                console.warn('⚠️ Fallback login handler fired for', t.id);
+                initLoginScreen();
+            } catch (_) {}
+        }, true);
+        
         initEndgameOverlay();
         console.log('✅ Симулятор загружен');
     } catch (error) {
