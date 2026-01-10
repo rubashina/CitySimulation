@@ -810,6 +810,15 @@ function resetDecisionToBaseline(decision, paramId = null) {
     return true;
 }
 
+function updateChangedCountNotices(changedCount, moveLimit) {
+    try {
+        const nodes = document.querySelectorAll('.param-notice-changes');
+        nodes.forEach(n => {
+            n.textContent = `Изменено параметров: ${changedCount}/${moveLimit}.`;
+        });
+    } catch (_) {}
+}
+
 function getDecisionForParticipant(participantId) {
     return ensureParticipantDecision(participantId);
 }
@@ -2198,7 +2207,7 @@ function renderParameters() {
     const participantParams = decision?.parameters || createDefaultParametersArray();
     const isConfirmed = isParticipantConfirmedForPhase(state.user.id, currentPhase);
     const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
-
+    
     // baseline на начало раунда (для лимита и откатов)
     if (isInputPhase && !isConfirmed) {
         try { ensureBaselineForCurrentRound(currentPhase); } catch (_) {}
@@ -2301,7 +2310,7 @@ function renderParameters() {
                     <span class="param-name">${param.name}</span>
                     <span class="param-header-right">
                         <button class="param-reset-btn" type="button" data-reset-param="${param.id}" title="Сбросить к началу раунда" ${(!isInputPhase || isConfirmed || !isChanged) ? 'disabled' : ''}>↺</button>
-                        <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
+                    <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
                     </span>
                 </div>
                 <p class="param-desc">${param.desc}</p>
@@ -2355,8 +2364,12 @@ function renderParameters() {
                     if (!teamId) return;
                     const myDecision = ensureParticipantDecision(state.user.id, teamId);
                     const myParams = myDecision?.parameters || (myDecision.parameters = createDefaultParametersArray());
-                    const pRow = myParams.find(p => p.id === param.id);
-                    const prevValue = pRow ? pRow.value : value;
+                    let pRow = myParams.find(p => p.id === param.id);
+                    if (!pRow) {
+                        pRow = { id: param.id, value: value };
+                        myParams.push(pRow);
+                    }
+                    const prevValue = (typeof pRow.value === 'number') ? pRow.value : Number(value);
 
                     // Лимит: считаем по числу изменённых параметров относительно baseline
                     if (myDecision?.baselinePhase === currentPhase && Array.isArray(myDecision?.baselineParameters)) {
@@ -2366,13 +2379,17 @@ function renderParameters() {
                         const willBeChanged = Number(newValue) !== Number(baseVal);
                         if (!wasChanged && willBeChanged && before >= moveLimit) {
                             // не даём добавить новый "изменённый параметр"
-                            e.target.value = String(prevValue);
+                        e.target.value = String(prevValue);
                             showNotification(`Лимит изменений: ${moveLimit}. Сначала верните один параметр к началу раунда (↺).`, 'warning');
-                            return;
-                        }
+                        return;
+                    }
                     }
 
-                    if (pRow) pRow.value = newValue;
+                    // before/after — чтобы обновлять UI-счётчик только при переходе через baseline
+                    const beforeCount = (myDecision?.baselinePhase === currentPhase && Array.isArray(myDecision?.baselineParameters))
+                        ? countChangedParams(myDecision)
+                        : null;
+                    pRow.value = newValue;
 
                     // Бюджет считаем по КОМАНДНОМУ (среднему) решению
                     const candidateAgg = computeAggregatedTeamParameters(teamId, {
@@ -2385,7 +2402,7 @@ function renderParameters() {
                     
                     if (budgetUsed > budgetTotal) {
                         // Откат (нельзя выйти за бюджет)
-                        if (pRow) pRow.value = prevValue;
+                        pRow.value = prevValue;
                         e.target.value = String(prevValue);
                         card.querySelector(`#value-${param.id}`).textContent = prevValue + param.unit;
                         showNotification(`Недостаточно бюджета: ${budgetUsed} / ${budgetTotal}. Откат изменения.`, 'error');
@@ -2402,15 +2419,20 @@ function renderParameters() {
                     debounceSaveDecision(state.user.id);
                     updateIGSDisplay();
                     updateConfirmButton();
-
-                    // Если достигли/освободили лимит — перерисуем, чтобы заблокировать/разблокировать остальные
+                    
+                    // Перерисовываем, если изменилось количество "изменённых параметров" (перешли через baseline)
                     try {
-                        if (myDecision?.baselinePhase === currentPhase && Array.isArray(myDecision?.baselineParameters)) {
-                            const after = countChangedParams(myDecision);
-                            if ((after >= moveLimit && changedCount < moveLimit) || (after < moveLimit && changedCount >= moveLimit)) {
+                        if (beforeCount !== null && myDecision?.baselinePhase === currentPhase && Array.isArray(myDecision?.baselineParameters)) {
+                            const afterCount = countChangedParams(myDecision);
+                            if (afterCount !== beforeCount) {
                                 renderParameters();
+                            } else {
+                                // Если лимит был достигнут/освобождён без смены счётчика (редко), тоже перерисуем
+                                if (afterCount >= moveLimit || afterCount < moveLimit) {
+                                    // no-op, оставляем
+                                }
                             }
-                        }
+                        } 
                     } catch (_) {}
                 });
             }
@@ -4401,10 +4423,10 @@ function bootCitySim() {
             const badge = document.getElementById('build-badge');
             if (badge) badge.textContent = 'Build: 20260110-8 · JS: OK';
         } catch (_) {}
-
+        
         // Инициализируем Firebase
         initFirebase();
-
+        
         initLoginScreen();
 
         // Страховка: если по какой-то причине initLoginScreen не навесил handlers,
