@@ -153,6 +153,10 @@
                     </div>
                     <div class="role-name" id="role-name">Архитектор</div>
                     <div class="role-desc" id="role-desc">Вы отстаиваете интересы архитектурного сообщества</div>
+                    <div class="team-members" id="team-members">
+                        <div class="team-members-title" id="team-members-title">Сокомандники</div>
+                        <div class="team-members-list" id="team-members-list"></div>
+                    </div>
                 </div>
                 
                 <!-- Сообщение модератора / Событие -->
@@ -578,6 +582,10 @@
                 </div>
                 <div class="endgame-sparkline" id="endgame-sparkline"></div>
                 <div class="endgame-hint">Динамика консенсуса по фазам</div>
+                <div class="endgame-actions">
+                    <button class="btn btn-primary" id="endgame-export-pdf">Скачать протокол (PDF)</button>
+                    <button class="btn btn-ghost" id="endgame-export-html">Скачать протокол (HTML)</button>
+                </div>
                 <button class="btn btn-ghost" id="endgame-close">Закрыть</button>
             </div>
         </div>
@@ -589,6 +597,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>

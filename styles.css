@@ -664,6 +664,70 @@ h4 { font-size: 1rem; }
     margin-bottom: 1rem;
 }
 
+.param-category {
+    margin-bottom: 0.75rem;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+/* Убираем стандартный маркер details */
+.param-category > summary {
+    list-style: none;
+}
+.param-category > summary::-webkit-details-marker {
+    display: none;
+}
+
+.param-category-header {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.9rem 1rem;
+    border-radius: var(--radius-lg);
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    cursor: pointer;
+    user-select: none;
+    transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.param-category-header:hover {
+    transform: translateY(-1px);
+    border-color: rgba(99, 102, 241, 0.25);
+    background: rgba(15, 23, 42, 0.65);
+}
+
+.category-icon {
+    font-size: 1.1rem;
+}
+
+.category-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.category-weight {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+.category-chevron {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    transform: rotate(-90deg);
+    transition: transform var(--transition-fast);
+}
+
+.param-category[open] .category-chevron {
+    transform: rotate(0deg);
+}
+
+.param-category-body {
+    padding: 0.75rem 0;
+}
+
 .param-name {
     font-weight: 600;
     font-size: 1rem;
@@ -680,6 +744,13 @@ h4 { font-size: 1rem; }
     font-size: 0.8125rem;
     color: var(--text-muted);
     margin-bottom: 1rem;
+}
+
+.param-subvalue {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin: -0.5rem 0 0.75rem 0;
+    opacity: 0.9;
 }
 
 /* Slider */
@@ -752,37 +823,8 @@ h4 { font-size: 1rem; }
 }
 
 /* =====================================================
-   КАТЕГОРИИ ПАРАМЕТРОВ
+   КАТЕГОРИИ ПАРАМЕТРОВ (АККОРДЕОН)
    ===================================================== */
-.param-category-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem 0 0.5rem;
-    margin-top: 1rem;
-    border-bottom: 1px solid var(--border-color);
-    grid-column: 1 / -1;
-}
-
-.param-category-header:first-child {
-    margin-top: 0;
-}
-
-.category-icon {
-    font-size: 1.25rem;
-}
-
-.category-name {
-    font-weight: 600;
-    font-size: 0.9375rem;
-}
-
-.category-weight {
-    margin-left: auto;
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    font-weight: 600;
-}
 
 .param-card {
     border-left: 3px solid var(--border-color);
@@ -1748,6 +1790,50 @@ h4 { font-size: 1rem; }
 .role-desc {
     font-size: 0.875rem;
     color: var(--text-secondary);
+}
+
+.role-card .team-members {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(59, 130, 246, 0.18);
+    text-align: left;
+}
+
+.role-card .team-members-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+}
+
+.role-card .team-members-list {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.role-card .team-member-row {
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius-sm);
+    background: rgba(15, 23, 42, 0.35);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+.role-card .team-member-empty {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    padding: 0.25rem 0;
+}
+
+.endgame-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
 }
 
 /* Input Hint */

@@ -179,10 +179,17 @@ function handleLocalMessage(msg) {
                 state.participants.push(participant);
                 const teamId = getParticipantTeamId(participant);
                 if (teamId) initTeamData(teamId);
+                // Новые участники меняют состав команды → пересчёт агрегации
+                try { recomputeAllTeamAggregates(); } catch (_) {}
                 if (state.user.isModerator) {
                     renderParticipantsList();
                     renderParamsMatrix();
                     updateMetrics();
+                } else {
+                    renderTeamMembersList();
+                    renderParameters();
+                    updateConfirmButton();
+                    updateIGSDisplay();
                 }
             }
             break;
@@ -191,6 +198,8 @@ function handleLocalMessage(msg) {
                 Object.keys(msg.teams).forEach(teamId => {
                     state.teamsData[teamId] = msg.teams[teamId];
                 });
+                // Если есть решения участников — агрегация переопределит teamData.parameters/confirmed
+                try { recomputeAllTeamAggregates(); } catch (_) {}
                 if (state.user.isModerator) {
                     renderParticipantsList();
                     renderParamsMatrix();
@@ -198,6 +207,20 @@ function handleLocalMessage(msg) {
                     updateMetrics();
                     updateCharts();
                 } else {
+                    updateIGSDisplay();
+                }
+            }
+            break;
+        case 'decisions_update':
+            if (msg.decisions) {
+                state.participantDecisions = normalizeDecisionsMap(msg.decisions);
+                try { recomputeAllTeamAggregates(); } catch (_) {}
+                if (state.user.isModerator) {
+                    updateModeratorUI();
+                } else {
+                    renderTeamMembersList();
+                    renderParameters();
+                    updateConfirmButton();
                     updateIGSDisplay();
                 }
             }
@@ -220,7 +243,7 @@ function handleLocalMessage(msg) {
 
 function syncSessionFromLocal(data) {
     if (!data) return;
-    // Данные в localStorage храним как { session, phase, participants, teams }
+    // Данные в localStorage храним как { session, phase, participants, teams, decisions }
     if (data.session) {
         // createdAt может быть строкой
         const createdAt = data.session.createdAt ? new Date(data.session.createdAt) : state.session.createdAt;
@@ -239,6 +262,10 @@ function syncSessionFromLocal(data) {
     }
     if (data.teams) {
         state.teamsData = { ...state.teamsData, ...data.teams };
+    }
+    if (data.decisions) {
+        state.participantDecisions = normalizeDecisionsMap(data.decisions);
+        try { recomputeAllTeamAggregates(); } catch (_) {}
     }
     updatePhaseUI();
 }
@@ -339,6 +366,7 @@ function subscribeToSession(sessionCode) {
                 });
                 
                 console.log('✅ Загружено участников:', state.participants.length);
+                try { recomputeAllTeamAggregates(); } catch (_) {}
                 renderParticipantsList();
                 renderParamsMatrix();
                 updateMetrics();
@@ -360,6 +388,7 @@ function subscribeToSession(sessionCode) {
             // Инициализируем данные команды если нужно
             const teamId = getParticipantTeamId(participant);
             if (teamId) initTeamData(teamId);
+            try { recomputeAllTeamAggregates(); } catch (_) {}
             
             if (state.user.isModerator) {
                 console.log('🔄 Обновляю UI модератора...');
@@ -367,6 +396,11 @@ function subscribeToSession(sessionCode) {
                 renderParamsMatrix();
                 updateMetrics();
                 console.log('✅ UI модератора обновлён. Всего участников:', state.participants.length);
+            } else {
+                renderTeamMembersList();
+                renderParameters();
+                updateConfirmButton();
+                updateIGSDisplay();
             }
         } else if (participant && state.participants.find(p => p.id === participant.id)) {
             console.log('⚠️ Участник уже есть в списке:', participant.name);
@@ -390,6 +424,9 @@ function subscribeToSession(sessionCode) {
                     console.log(`🔄 Команда ${teamId}: confirmed ${oldConfirmed} → ${newConfirmed}`);
                 }
             });
+
+            // Если ведём решения по участникам — пересчитываем агрегацию и переопределяем параметры/confirmed
+            try { recomputeAllTeamAggregates(); } catch (_) {}
             
             if (state.user.isModerator) {
                 renderParticipantsList();
@@ -400,6 +437,22 @@ function subscribeToSession(sessionCode) {
             } else {
                 updateIGSDisplay();
             }
+        }
+    });
+
+    // Слушаем решения участников (новая модель) и агрегируем по командам
+    sessionRef.child('decisions').on('value', (snapshot) => {
+        const decisions = snapshot.val();
+        state.participantDecisions = normalizeDecisionsMap(decisions);
+        try { recomputeAllTeamAggregates(); } catch (_) {}
+
+        if (state.user.isModerator) {
+            updateModeratorUI();
+        } else {
+            renderTeamMembersList();
+            renderParameters();
+            updateConfirmButton();
+            updateIGSDisplay();
         }
     });
     
@@ -487,7 +540,8 @@ function saveSessionToFirebase() {
             },
             phase: state.session.phase,
             participants: existing.participants || {},
-            teams: existing.teams || {}
+            teams: existing.teams || {},
+            decisions: existing.decisions || {}
         };
         localWriteSession(state.session.code, data);
         localBroadcast({ type: 'session_update', code: state.session.code, data });
@@ -648,6 +702,153 @@ function debounceSaveTeam(teamId, delay = 300) {
     saveTeamTimeout[teamId] = setTimeout(() => {
         saveTeamToFirebase(teamId);
     }, delay);
+}
+
+// =====================================================
+// РЕШЕНИЯ УЧАСТНИКОВ (новая модель) + АГРЕГАЦИЯ ПО КОМАНДЕ
+// =====================================================
+
+function createDefaultParametersArray() {
+    const all = getAllParameters();
+    return all.map(p => ({ id: p.id, value: p.default }));
+}
+
+function normalizeDecision(decisionLike) {
+    if (!decisionLike || typeof decisionLike !== 'object') return null;
+    const teamId = decisionLike.teamId || decisionLike.team?.id || (typeof decisionLike.team === 'string' ? decisionLike.team : null);
+    const rawParams = Array.isArray(decisionLike.parameters) ? decisionLike.parameters : null;
+    const parameters = rawParams
+        ? rawParams.map(p => ({ id: p.id, value: Number(p.value) }))
+        : createDefaultParametersArray();
+    return {
+        teamId,
+        parameters,
+        confirmed: !!decisionLike.confirmed,
+        confirmedPhase: typeof decisionLike.confirmedPhase === 'number' ? decisionLike.confirmedPhase : null,
+        updatedAt: decisionLike.updatedAt || null
+    };
+}
+
+function normalizeDecisionsMap(mapLike) {
+    const out = {};
+    if (!mapLike || typeof mapLike !== 'object') return out;
+    Object.keys(mapLike).forEach(pid => {
+        const norm = normalizeDecision(mapLike[pid]);
+        if (norm) out[pid] = norm;
+    });
+    return out;
+}
+
+function ensureParticipantDecision(participantId, teamId = null) {
+    if (!participantId) return null;
+    if (!state.participantDecisions) state.participantDecisions = {};
+    if (state.participantDecisions[participantId]) return state.participantDecisions[participantId];
+    const inferredTeamId = teamId || getParticipantTeamId(state.participants.find(p => p.id === participantId)) || null;
+    state.participantDecisions[participantId] = {
+        teamId: inferredTeamId,
+        parameters: createDefaultParametersArray(),
+        confirmed: false,
+        confirmedPhase: null,
+        updatedAt: null
+    };
+    return state.participantDecisions[participantId];
+}
+
+function getDecisionForParticipant(participantId) {
+    return ensureParticipantDecision(participantId);
+}
+
+function isParticipantConfirmedForPhase(participantId, phase) {
+    const d = state.participantDecisions?.[participantId];
+    if (!d?.confirmed) return false;
+    if (typeof d.confirmedPhase !== 'number') return false;
+    return d.confirmedPhase === Number(phase);
+}
+
+function getTeamDecisionProgress(teamId, phase) {
+    const members = getTeamMembers(teamId);
+    const total = members.length;
+    const confirmed = members.filter(m => isParticipantConfirmedForPhase(m.id, phase)).length;
+    return { confirmed, total };
+}
+
+function computeAggregatedTeamParameters(teamId, override = null) {
+    const members = getTeamMembers(teamId);
+    const allParams = getAllParameters();
+    if (!members || members.length === 0) {
+        return allParams.map(p => ({ id: p.id, value: p.default }));
+    }
+    return allParams.map(paramDef => {
+        let sum = 0;
+        let n = 0;
+        members.forEach(m => {
+            const decision = state.participantDecisions?.[m.id];
+            let v = decision?.parameters?.find(x => x.id === paramDef.id)?.value;
+            if (override && m.id === override.participantId && paramDef.id === override.paramId) v = override.value;
+            if (typeof v !== 'number' || Number.isNaN(v)) v = paramDef.default;
+            sum += v;
+            n += 1;
+        });
+        return { id: paramDef.id, value: sum / Math.max(1, n) };
+    });
+}
+
+function recomputeTeamAggregate(teamId) {
+    if (!teamId) return;
+    const teamData = initTeamData(teamId);
+    const hasAnyDecisions = getTeamMembers(teamId).some(m => !!state.participantDecisions?.[m.id]);
+    if (!hasAnyDecisions) return;
+    teamData.parameters = computeAggregatedTeamParameters(teamId);
+    // Команда считается "подтвердившей" только в фазах ввода и только если все её участники подтвердили
+    const phase = Number(state.session.phase);
+    const isInputPhase = (phase === 1 || phase === 4);
+    const prog = getTeamDecisionProgress(teamId, phase);
+    teamData.confirmed = isInputPhase && prog.total > 0 && prog.confirmed === prog.total;
+    teamData._progress = prog;
+}
+
+function recomputeAllTeamAggregates() {
+    const teams = getActiveTeams();
+    teams.forEach(t => recomputeTeamAggregate(t.id));
+}
+
+// Сохранение решения участника в Firebase/LocalSync
+function saveParticipantDecision(participantId) {
+    if (!participantId || !state.session.code) return;
+    const decision = state.participantDecisions?.[participantId];
+    if (!decision) return;
+    decision.updatedAt = new Date().toISOString();
+    // teamId может быть не проставлен, добьём
+    if (!decision.teamId) decision.teamId = getParticipantTeamId(state.participants.find(p => p.id === participantId)) || null;
+
+    // Локальный режим
+    if (!firebaseEnabled) {
+        const existing = localReadSession(state.session.code);
+        if (!existing) return;
+        existing.decisions = existing.decisions || {};
+        existing.decisions[participantId] = decision;
+        localWriteSession(state.session.code, existing);
+        localBroadcast({ type: 'decisions_update', code: state.session.code, decisions: existing.decisions });
+        // также шлём полный слепок на всякий случай
+        localBroadcast({ type: 'session_update', code: state.session.code, data: existing });
+        return;
+    }
+
+    try {
+        const ref = firebaseDB.ref(`sessions/${state.session.code}/decisions/${participantId}`);
+        ref.set(decision).catch((e) => {
+            console.error('❌ Ошибка сохранения решения участника:', e);
+            showNotification('Не удалось сохранить ваше решение (Firebase).', 'error', 8000);
+        });
+    } catch (e) {
+        console.error('❌ Ошибка сохранения решения участника:', e);
+    }
+}
+
+let saveDecisionTimeout = {};
+function debounceSaveDecision(participantId, delay = 300) {
+    if (saveDecisionTimeout[participantId]) clearTimeout(saveDecisionTimeout[participantId]);
+    saveDecisionTimeout[participantId] = setTimeout(() => saveParticipantDecision(participantId), delay);
 }
 
 // =====================================================
@@ -959,6 +1160,10 @@ const state = {
     
     // Участники сессии
     participants: [],
+
+    // Решения участников (параметры + подтверждение на уровне участника)
+    // { participantId: { teamId, parameters:[{id,value}], confirmed, confirmedPhase, updatedAt } }
+    participantDecisions: {},
     
     // Данные команд (параметры хранятся на уровне команды, не участника)
     teamsData: {},  // { teamId: { parameters: [...], confirmed: false, captainId: null } }
@@ -988,7 +1193,12 @@ const state = {
     },
     
     // История значений для графиков
-    timelineData: []
+    timelineData: [],
+
+    // UI-состояние (локально в памяти вкладки)
+    ui: {
+        categoryOpen: {} // { [categoryId]: boolean }
+    }
 };
 
 // =====================================================
@@ -1620,6 +1830,10 @@ function completeJoinSessionStep2(code, name, realRole) {
         isCaptain: false
     };
     state.participants.push(participant);
+
+    // Инициализируем решение участника (его личные параметры)
+    ensureParticipantDecision(participant.id, assignedTeam.id);
+    try { recomputeTeamAggregate(assignedTeam.id); } catch (_) {}
     
     // Назначаем капитана команды
     assignTeamCaptain(assignedTeam.id);
@@ -1631,6 +1845,8 @@ function completeJoinSessionStep2(code, name, realRole) {
     // Сохраняем участника в Firebase
     saveParticipantToFirebase(participant);
     saveTeamToFirebase(assignedTeam.id);
+    // Сохраняем начальное решение участника (чтобы оно участвовало в агрегации)
+    saveParticipantDecision(participant.id);
     
     showScreen('participant-screen');
     initParticipantScreen();
@@ -1649,6 +1865,7 @@ function createSession(sessionName, moderatorName, customCode = '', projectScale
     // ⚠️ СБРОС ВСЕХ ДАННЫХ для новой сессии
     state.participants = [];
     state.teamsData = {};
+    state.participantDecisions = {};
     state.history = [];
     state.log = [];
     state.eventsQueue = [];
@@ -1774,15 +1991,48 @@ function renderRoleCard() {
     if (gameRole && team) {
         const captainBadge = userIsCaptain ? ' 👑' : '';
         $('#role-name').textContent = `${gameRole.icon} ${gameRole.name}${captainBadge}`;
-        $('#role-desc').textContent = userIsCaptain 
-            ? 'Вы капитан команды! Управляйте ползунками параметров.' 
-            : gameRole.desc;
+        $('#role-desc').textContent = `${gameRole.desc} Ваши настройки будут агрегироваться с решениями команды (среднее).`;
         $('#role-team').textContent = team.name + (userIsCaptain ? ' (капитан)' : '');
         $('#role-team').className = `role-team team-${team.id}`;
         roleCard.classList.remove('hidden');
+        renderTeamMembersList();
     } else {
         roleCard.classList.add('hidden');
     }
+}
+
+function renderTeamMembersList() {
+    const list = $('#team-members-list');
+    const title = $('#team-members-title');
+    if (!list) return;
+    const teamId = state.user?.team?.id;
+    if (!teamId) {
+        list.innerHTML = '<div class="team-member-empty">Команда не определена</div>';
+        return;
+    }
+    const members = getTeamMembers(teamId)
+        .filter(p => p && p.id !== state.user.id)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru'));
+
+    if (title) title.textContent = `Сокомандники (${members.length + 1})`;
+
+    if (members.length === 0) {
+        list.innerHTML = '<div class="team-member-empty">Пока вы один(а) в команде</div>';
+        return;
+    }
+    list.innerHTML = members.map(m => {
+        const captainBadge = isCaptain(m.id) ? '👑 ' : '';
+        return `<div class="team-member-row">${captainBadge}${escapeHtml(m.name || 'Без имени')}</div>`;
+    }).join('');
+}
+
+function escapeHtml(str) {
+    return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
 }
 
 function updateParticipantHeader() {
@@ -1797,37 +2047,49 @@ function renderParameters() {
     const grid = $('#parameters-grid');
     grid.innerHTML = '';
     
-    // Проверяем, является ли пользователь капитаном
-    const userIsCaptain = isCaptain(state.user.id);
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
-    const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+    const teamId = state.user.team?.id || null;
+    const decision = ensureParticipantDecision(state.user.id, teamId);
+    const participantParams = decision?.parameters || createDefaultParametersArray();
+    const isConfirmed = isParticipantConfirmedForPhase(state.user.id, currentPhase);
+
+    // Для подсказок: текущие командные значения (среднее)
+    const teamAgg = teamId ? computeAggregatedTeamParameters(teamId) : [];
+    const teamAggMap = new Map(teamAgg.map(p => [p.id, p.value]));
     
-    // Нормализуем состояние лимита ходов для команды
-    if (teamData) {
-        if (teamData.movesPhase !== currentPhase) {
-            teamData.movesPhase = currentPhase;
-            teamData.movesUsed = [];
-        }
-        if (!Array.isArray(teamData.movesUsed)) teamData.movesUsed = [];
-    }
-    const movesUsed = teamData?.movesUsed || [];
-    const movesRemaining = Math.max(0, moveLimit - movesUsed.length);
-    
-    // Рендерим параметры по категориям
+    // Рендерим параметры по категориям (аккордеон)
     CONFIG.parameterCategories.forEach(category => {
-        // Заголовок категории
-        const categoryHeader = document.createElement('div');
-        categoryHeader.className = 'param-category-header';
-        categoryHeader.innerHTML = `
+        if (!state.ui) state.ui = { categoryOpen: {} };
+        if (!state.ui.categoryOpen) state.ui.categoryOpen = {};
+
+        const details = document.createElement('details');
+        details.className = 'param-category';
+        details.dataset.categoryId = category.id;
+        details.open = !!state.ui.categoryOpen[category.id]; // по умолчанию — закрыто
+
+        const summary = document.createElement('summary');
+        summary.className = 'param-category-header';
+        summary.innerHTML = `
             <span class="category-icon">${category.icon}</span>
             <span class="category-name">${category.name}</span>
             <span class="category-weight" style="color: ${category.weight < 0 ? '#ef4444' : category.color}">
                 ${category.weight > 0 ? '+' : ''}${(category.weight * 100).toFixed(0)}%
             </span>
+            <span class="category-chevron" aria-hidden="true">▾</span>
         `;
-        grid.appendChild(categoryHeader);
+
+        details.addEventListener('toggle', () => {
+            state.ui.categoryOpen[category.id] = details.open;
+        });
+
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'param-category-body';
+        details.appendChild(body);
+
+        grid.appendChild(details);
         
         // Параметры категории
         category.params.forEach(param => {
@@ -1836,18 +2098,16 @@ function renderParameters() {
             const min = constraint.min ?? param.min;
             const max = constraint.max ?? param.max;
             
-            // Получаем значение из данных команды
-            const teamParam = teamData?.parameters.find(p => p.id === param.id);
-            const value = teamParam ? teamParam.value : param.default;
-            
-            // Ползунок неактивен если не капитан или заблокирован
-            const alreadyUsedThisPhase = movesUsed.includes(param.id);
-            const movesExhausted = movesRemaining <= 0;
-            const blockedByMoveLimit = movesExhausted && !alreadyUsedThisPhase;
-            const isDisabled = !userIsCaptain || isLocked || !isInputPhase || !!teamData?.confirmed || blockedByMoveLimit;
+            // Значение — личное решение участника
+            const myParam = participantParams.find(p => p.id === param.id);
+            const value = (myParam && typeof myParam.value === 'number') ? myParam.value : param.default;
+            const teamValue = teamAggMap.has(param.id) ? teamAggMap.get(param.id) : param.default;
+
+            // Ползунок неактивен если заблокирован/не фаза ввода/участник уже подтвердил в этой фазе
+            const isDisabled = isLocked || !isInputPhase || isConfirmed;
             
             const card = document.createElement('div');
-            card.className = `param-card ${isLocked ? 'locked' : ''} ${!userIsCaptain ? 'readonly' : ''}`;
+            card.className = `param-card ${isLocked ? 'locked' : ''} ${isDisabled ? 'readonly' : ''}`;
             card.style.borderLeftColor = category.color;
             card.innerHTML = `
                 <div class="param-header">
@@ -1855,6 +2115,7 @@ function renderParameters() {
                     <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
                 </div>
                 <p class="param-desc">${param.desc}</p>
+                <div class="param-subvalue">Командное (среднее): ${Number(teamValue).toFixed(0)}${param.unit}</div>
                 <div class="param-slider">
                     <input type="range" class="slider" id="slider-${param.id}" 
                            min="${min}" max="${max}" value="${value}"
@@ -1865,82 +2126,57 @@ function renderParameters() {
                         <span>${max}${param.unit}</span>
                     </div>
                 </div>
-                ${!userIsCaptain
-                    ? '<div class="param-notice">Только капитан может изменять</div>'
-                    : (!isInputPhase
-                        ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
-                        : (teamData?.confirmed
-                            ? '<div class="param-notice">Решение подтверждено — изменения заблокированы</div>'
-                            : (blockedByMoveLimit
-                                ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
-                                : (movesUsed.length > 0
-                                    ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
-                                    : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))))}
+                ${!isInputPhase
+                    ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
+                    : (isConfirmed
+                        ? '<div class="param-notice">Вы подтвердили решение — изменения заблокированы до следующего раунда</div>'
+                        : (isLocked
+                            ? '<div class="param-notice">Параметр заблокирован событием/ограничением</div>'
+                            : '<div class="param-notice">Настройте параметр — вклад будет учтён в среднем по команде</div>'))}
             `;
             
-            grid.appendChild(card);
+            body.appendChild(card);
             
-            // Обработчик слайдера (только для капитана)
-            if (userIsCaptain && !isLocked && isInputPhase && !teamData?.confirmed) {
+            // Обработчик слайдера (каждый участник)
+            if (!isLocked && isInputPhase && !isConfirmed) {
                 const slider = card.querySelector(`#slider-${param.id}`);
                 slider.addEventListener('input', (e) => {
                     const newValue = parseInt(e.target.value);
-                    const teamDataNow = state.user.team ? getTeamData(state.user.team.id) : null;
-                    if (!teamDataNow) return;
-                    
-                    // Если фаза сменилась — сбрасываем счётчик изменений
-                    if (teamDataNow.movesPhase !== currentPhase) {
-                        teamDataNow.movesPhase = currentPhase;
-                        teamDataNow.movesUsed = [];
-                    }
-                    
-                    const used = Array.isArray(teamDataNow.movesUsed) ? teamDataNow.movesUsed : (teamDataNow.movesUsed = []);
-                    const alreadyUsed = used.includes(param.id);
-                    const limit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
-                    if (!alreadyUsed && used.length >= limit) {
-                        // Отменяем изменение: возвращаем ползунок к текущему сохранённому значению
-                        const prevValue = teamDataNow.parameters.find(p => p.id === param.id)?.value ?? value;
-                        e.target.value = String(prevValue);
-                        card.querySelector(`#value-${param.id}`).textContent = prevValue + param.unit;
-                        showNotification(`Лимит изменений на фазу исчерпан (${limit}).`, 'warning');
-                        return;
-                    }
-                    if (!alreadyUsed) {
-                        used.push(param.id);
-                    }
-                    
-                    // Пытаемся применить изменение с учётом бюджета
-                    const teamParamData = teamDataNow.parameters.find(p => p.id === param.id);
-                    const prevValue = teamParamData ? teamParamData.value : value;
-                    
-                    if (teamParamData) teamParamData.value = newValue;
-                    const budgetUsed = calculateBudgetUsed(teamDataNow.parameters);
+                    if (!teamId) return;
+                    const myDecision = ensureParticipantDecision(state.user.id, teamId);
+                    const myParams = myDecision?.parameters || (myDecision.parameters = createDefaultParametersArray());
+                    const pRow = myParams.find(p => p.id === param.id);
+                    const prevValue = pRow ? pRow.value : value;
+                    if (pRow) pRow.value = newValue;
+
+                    // Бюджет считаем по КОМАНДНОМУ (среднему) решению
+                    const candidateAgg = computeAggregatedTeamParameters(teamId, {
+                        participantId: state.user.id,
+                        paramId: param.id,
+                        value: newValue
+                    });
+                    const budgetUsed = calculateBudgetUsed(candidateAgg);
                     const budgetTotal = state.session.budgetTotal;
-                    
+
                     if (budgetUsed > budgetTotal) {
                         // Откат (нельзя выйти за бюджет)
-                        if (teamParamData) teamParamData.value = prevValue;
+                        if (pRow) pRow.value = prevValue;
                         e.target.value = String(prevValue);
                         card.querySelector(`#value-${param.id}`).textContent = prevValue + param.unit;
                         showNotification(`Недостаточно бюджета: ${budgetUsed} / ${budgetTotal}. Откат изменения.`, 'error');
+                        recomputeTeamAggregate(teamId);
                         updateIGSDisplay();
                         updateConfirmButton();
                         return;
                     }
-                    
+
                     card.querySelector(`#value-${param.id}`).textContent = newValue + param.unit;
-                    
-                    // Синхронизируем с Firebase (с debounce)
-                    debounceSaveTeam(state.user.team.id);
-                    
-                    // Обновляем ИГС в реальном времени
+
+                    // Пересчёт агрегации команды и UI
+                    recomputeTeamAggregate(teamId);
+                    debounceSaveDecision(state.user.id);
                     updateIGSDisplay();
                     updateConfirmButton();
-                    
-                    // Перерисуем, чтобы заблокировать "лишние" ползунки, когда лимит исчерпан
-                    if (!alreadyUsed && used.length >= (CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6)) {
-                        renderParameters();
-                    }
                 });
             }
         });
@@ -2172,8 +2408,6 @@ function updateConfirmButton() {
     const statusEl = $('#confirm-status');
     if (!btn || !statusEl) return;
     
-    const userIsCaptain = isCaptain(state.user.id);
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
     const currentPhase = state.session.phase;
     
     // Проверяем, активна ли фаза ввода (1 или 4)
@@ -2184,59 +2418,50 @@ function updateConfirmButton() {
         statusEl.textContent = getPhaseStatusMessage(currentPhase);
         return;
     }
-    
-    // Только капитан может подтверждать решение команды
-    if (!userIsCaptain) {
+
+    const isConfirmed = isParticipantConfirmedForPhase(state.user.id, currentPhase);
+    if (isConfirmed) {
         btn.disabled = true;
-        statusEl.textContent = 'Только капитан может подтвердить решение команды';
+        statusEl.textContent = 'Вы подтвердили своё решение ✓';
         return;
     }
-    
-    if (teamData?.confirmed) {
-        btn.disabled = true;
-        statusEl.textContent = 'Решение команды подтверждено ✓';
-        return;
-    }
-    
-    // В фазах ввода капитан может подтвердить как "статус-кво", так и изменения.
-    // (это соответствует сценарию: в фазе 1 можно подтвердить решение даже без правок)
+
     btn.disabled = false;
-    
-    // Небольшая подсказка, если изменений нет
-    const allParams = getAllParameters();
-    const hasChanges = teamData?.parameters?.some(p => {
-        const defaultParam = allParams.find(dp => dp.id === p.id);
-        return defaultParam && p.value !== defaultParam.default;
-    }) ?? false;
-    statusEl.textContent = hasChanges ? '' : 'Можно подтвердить статус-кво или внесите изменения';
+    const teamId = state.user?.team?.id;
+    if (teamId) {
+        const prog = getTeamDecisionProgress(teamId, currentPhase);
+        statusEl.textContent = `Подтвердите ваше решение. Подтвердили в команде: ${prog.confirmed}/${prog.total}`;
+    } else {
+        statusEl.textContent = 'Подтвердите ваше решение';
+    }
 }
 
 function confirmDecision() {
-    const userIsCaptain = isCaptain(state.user.id);
-    if (!userIsCaptain) {
-        showNotification('Только капитан может подтвердить решение', 'error');
+    const currentPhase = Number(state.session.phase);
+    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
+    if (!isInputPhase) {
+        showNotification('Подтверждение доступно только в фазах 1 и 4', 'warning');
         return;
     }
-    
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
-    if (teamData) {
-        teamData.confirmed = true;
-        
-        // Сохраняем в Firebase
-        saveTeamToFirebase(state.user.team.id);
-    }
-    
-    $('#confirm-status').textContent = 'Решение команды подтверждено ✓';
+
+    const teamId = state.user?.team?.id || null;
+    const decision = ensureParticipantDecision(state.user.id, teamId);
+    decision.confirmed = true;
+    decision.confirmedPhase = currentPhase;
+    saveParticipantDecision(state.user.id);
+
+    recomputeAllTeamAggregates();
+
+    $('#confirm-status').textContent = 'Вы подтвердили своё решение ✓';
     $('#confirm-btn').disabled = true;
     
     // После подтверждения блокируем ползунки (до смены фазы)
     renderParameters();
     
-    addToHistory(`Подтвердили решение за ${state.user.team.name}`);
-    addToLog('confirm', `${state.user.team.name} подтвердила решение (капитан: ${state.user.name})`);
-    showNotification('Решение команды отправлено!', 'success');
-    
-    console.log(`✅ Команда ${state.user.team.id} подтвердила решение в фазе ${state.session.phase}`);
+    addToHistory(`Подтвердили своё решение (${state.user.team?.name || 'команда'})`);
+    addToLog('confirm', `${state.user.name} подтвердил(а) решение в фазе ${currentPhase} (${state.user.team?.name || '-'})`);
+    showNotification('Ваше решение отправлено!', 'success');
+    updateConfirmButton();
 }
 
 // Панель истории
@@ -2459,6 +2684,16 @@ function updatePhaseUI() {
 function initEndgameOverlay() {
     const closeBtn = $('#endgame-close');
     if (closeBtn) closeBtn.addEventListener('click', hideEndgameOverlay);
+
+    const pdfBtn = $('#endgame-export-pdf');
+    if (pdfBtn) pdfBtn.addEventListener('click', () => {
+        exportData('pdf');
+    });
+
+    const htmlBtn = $('#endgame-export-html');
+    if (htmlBtn) htmlBtn.addEventListener('click', () => {
+        exportProtocolHTML();
+    });
 }
 
 function hideEndgameOverlay() {
@@ -2532,23 +2767,13 @@ function applyPhaseLogic(phase) {
     
     console.log(`⚙️ Применяю логику фазы ${phase}, ввод активен: ${isInputPhase}`);
     
-    // Сбрасываем подтверждения команд при начале нового раунда ввода
-    if (phase === 4) {
-        Object.keys(state.teamsData).forEach(teamId => {
-            state.teamsData[teamId].confirmed = false;
-        });
-        console.log('🔄 Сброшены подтверждения команд для Раунда 2');
-    }
-    
     // Блокируем/разблокируем ползунки (только для участников)
     if (!state.user.isModerator) {
         const sliders = $$('.param-card .slider');
         sliders.forEach(slider => {
-            if (!isCaptain(state.user.id)) {
-                slider.disabled = true; // Не капитан — всегда заблокирован
-            } else {
-                slider.disabled = !isInputPhase; // Капитан — только в раундах ввода
-            }
+            // конкретные блокировки/подтверждение учтём в renderParameters(),
+            // здесь — только "фаза ввода или нет"
+            slider.disabled = !isInputPhase;
         });
         
         // Визуально показываем статус ползунков
@@ -2598,10 +2823,10 @@ function updateEventBanner(phase) {
     
     const phaseInfo = {
         0: { icon: '⏳', title: 'Добро пожаловать!', text: 'Ожидайте начала симуляции от модератора.' },
-        1: { icon: '✏️', title: 'Раунд 1: Принятие решений', text: 'Обсудите в команде и настройте параметры проекта. Капитан управляет ползунками.' },
+        1: { icon: '✏️', title: 'Раунд 1: Принятие решений', text: 'Обсудите в команде и настройте параметры проекта. Решение команды — среднее по участникам.' },
         2: { icon: '📊', title: 'Анализ результатов', text: 'Изучите решения других команд. Обсудите конфликты и точки согласия.' },
         3: { icon: '⚡', title: 'Интермиссия', text: 'Модератор вводит неожиданное событие. Готовьтесь к изменениям!' },
-        4: { icon: '🤝', title: 'Раунд 2: Переговоры', text: 'Скорректируйте решения с учётом новых условий и мнений других команд.' },
+        4: { icon: '🤝', title: 'Раунд 2: Переговоры', text: 'Скорректируйте решения с учётом новых условий и мнений других команд. Решение команды — среднее по участникам.' },
         5: { icon: '🏁', title: 'Игра завершена!', text: 'Спасибо за участие! Ознакомьтесь с итоговыми результатами.' }
     };
     
@@ -2630,10 +2855,15 @@ function renderParticipantsList() {
     activeTeams.forEach(team => {
         const teamMembers = getTeamMembers(team.id);
         const teamData = getTeamData(team.id);
+        const phase = Number(state.session.phase);
+        const isInputPhase = (phase === 1 || phase === 4);
+        const prog = getTeamDecisionProgress(team.id, phase);
+        const progText = isInputPhase && prog.total > 0 ? ` · ${prog.confirmed}/${prog.total}` : '';
+        const doneMark = (isInputPhase && prog.total > 0 && prog.confirmed === prog.total) ? '✓' : '';
         
         html += `<div class="team-group" style="border-left: 3px solid ${team.color}; margin-bottom: 1rem; padding-left: 0.75rem;">`;
         html += `<div class="team-group-header" style="font-size: 0.75rem; font-weight: 600; color: ${team.color}; margin-bottom: 0.5rem;">
-            ${team.name} (${teamMembers.length}) ${teamData.confirmed ? '✓' : ''}
+            ${team.name} (${teamMembers.length}) ${doneMark}${progText}
         </div>`;
         
         teamMembers.forEach(p => {
@@ -2699,6 +2929,22 @@ function addParticipant(name, isBot = false, values = null, realRole = null) {
     };
     
     state.participants.push(participant);
+
+    // Решение участника: если переданы values (пресет), используем их; иначе — дефолты
+    const decision = ensureParticipantDecision(participant.id, assignedTeam.id);
+    if (values && typeof values === 'object') {
+        try {
+            // values может быть вида {Z: 10, ...} — подставим в parameters
+            const all = createDefaultParametersArray();
+            decision.parameters = all.map(p => ({
+                id: p.id,
+                value: (values[p.id] !== undefined) ? Number(values[p.id]) : p.value
+            }));
+        } catch (_) {}
+    }
+    decision.confirmed = false;
+    decision.confirmedPhase = null;
+    decision.updatedAt = new Date().toISOString();
     
     // Назначаем капитана команды
     assignTeamCaptain(assignedTeam.id);
@@ -3044,12 +3290,24 @@ function applyEventEffect(event) {
             break;
             
         case 'force':
-            // Применяем принудительное значение ко всем командам
-            Object.keys(state.teamsData).forEach(teamId => {
-                const teamData = state.teamsData[teamId];
-                const param = teamData.parameters.find(p => p.id === event.params.parameter);
-                if (param) param.value = event.params.value;
-            });
+            // Применяем принудительное значение ко всем участникам (команда = среднее по участникам)
+            if (state.participants.length > 0) {
+                state.participants.forEach(p => {
+                    const teamId = getParticipantTeamId(p);
+                    const d = ensureParticipantDecision(p.id, teamId);
+                    const row = d.parameters.find(x => x.id === event.params.parameter);
+                    if (row) row.value = Number(event.params.value);
+                    saveParticipantDecision(p.id);
+                });
+                recomputeAllTeamAggregates();
+            } else {
+                // fallback: старый режим (команды напрямую)
+                Object.keys(state.teamsData).forEach(teamId => {
+                    const teamData = state.teamsData[teamId];
+                    const param = teamData.parameters.find(p => p.id === event.params.parameter);
+                    if (param) param.value = event.params.value;
+                });
+            }
             break;
     }
 }
@@ -3070,20 +3328,19 @@ function initModeratorActions() {
     
     // Сбросить параметры
     onId('reset-all-btn', 'click', () => {
-        // Сбрасываем параметры всех команд
-        const allParams = getAllParameters();
-        Object.keys(state.teamsData).forEach(teamId => {
-            const teamData = state.teamsData[teamId];
-            teamData.confirmed = false;
-            teamData.parameters.forEach(p => {
-                const defaultParam = allParams.find(dp => dp.id === p.id);
-                p.value = defaultParam ? defaultParam.default : 50;
-            });
+        // Сбрасываем решения ВСЕХ участников (команды агрегируются из них)
+        const defaults = createDefaultParametersArray();
+        state.participants.forEach(p => {
+            const teamId = getParticipantTeamId(p);
+            const d = ensureParticipantDecision(p.id, teamId);
+            d.parameters = defaults.map(x => ({ ...x }));
+            d.confirmed = false;
+            d.confirmedPhase = null;
+            d.updatedAt = new Date().toISOString();
+            saveParticipantDecision(p.id);
         });
-        renderParamsMatrix();
-        renderAvgParams();
-        updateMetrics();
-        updateCharts();
+        recomputeAllTeamAggregates();
+        updateModeratorUI();
         addToLog('action', 'Параметры сброшены к значениям по умолчанию');
         showNotification('Параметры сброшены', 'info');
     });
@@ -3098,9 +3355,18 @@ function initModeratorActions() {
     
     // Принять за всех
     onId('force-confirm-btn', 'click', () => {
-        state.participants.forEach(p => p.confirmed = true);
-        renderParticipantsList();
-        updateMetrics();
+        const phase = Number(state.session.phase);
+        const isInputPhase = (phase === 1 || phase === 4);
+        state.participants.forEach(p => {
+            const teamId = getParticipantTeamId(p);
+            const d = ensureParticipantDecision(p.id, teamId);
+            d.confirmed = true;
+            d.confirmedPhase = isInputPhase ? phase : (d.confirmedPhase ?? phase);
+            d.updatedAt = new Date().toISOString();
+            saveParticipantDecision(p.id);
+        });
+        recomputeAllTeamAggregates();
+        updateModeratorUI();
         addToLog('action', 'Решения приняты за всех участников');
         showNotification('Решения подтверждены за всех', 'warning');
     });
@@ -3403,9 +3669,13 @@ function exportData(format) {
         session: state.session,
         parameters: state.parameters,
         participants: state.participants,
+        teams: state.teamsData,
+        decisions: state.participantDecisions,
+        timelineData: state.timelineData,
         log: state.log,
         exportedAt: new Date().toISOString()
     };
+    let toast = true;
     
     switch (format) {
         case 'json':
@@ -3430,11 +3700,14 @@ function exportData(format) {
                 showNotification('Экспорт PDF недоступен: библиотека jsPDF не загрузилась (проверьте интернет).', 'error');
                 return;
             }
-            generatePDF(data);
+            toast = false; // успех/ошибка покажем внутри generatePDF
+            Promise.resolve(generatePDF(data)).catch(() => {});
             break;
     }
     
-    showNotification(`Данные экспортированы в ${format.toUpperCase()}`, 'success');
+    if (toast) {
+        showNotification(`Данные экспортированы в ${format.toUpperCase()}`, 'success');
+    }
 }
 
 function generateCSV() {
@@ -3515,65 +3788,356 @@ function generateXLSX(data) {
     XLSX.writeFile(wb, 'simulation_data.xlsx');
 }
 
-function generatePDF(data) {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
+function buildProtocolSnapshot() {
     const activeTeams = getActiveTeams();
-    
-    // Заголовок
-    doc.setFontSize(20);
-    doc.text('Отчёт симуляции ИГС', 105, 20, { align: 'center' });
-    
-    doc.setFontSize(12);
-    doc.text(`Сессия: ${state.session.name}`, 20, 35);
-    doc.text(`Код: ${state.session.code}`, 20, 42);
-    doc.text(`Дата: ${formatDateTime(new Date())}`, 20, 49);
-    doc.text(`Команд: ${activeTeams.length} | Участников: ${state.participants.length}`, 20, 56);
-    
-    // ИГС Консенсуса
+    const exportedAt = new Date();
     const avgIGS = calculateAverageIGS();
-    if (avgIGS) {
-        doc.setFontSize(16);
-        doc.text(`ИГС Консенсуса: ${avgIGS.total.toFixed(1)}`, 20, 70);
-        doc.text(`Конфликт D: ${calculateConflict().toFixed(1)}`, 120, 70);
-    }
-    
-    // Компоненты ИГС
-    doc.setFontSize(14);
-    doc.text('Компоненты ИГС по командам:', 20, 85);
-    
-    doc.setFontSize(10);
-    let y = 95;
-    activeTeams.forEach(team => {
-        const igs = calculateTeamIGS(team.id);
+    const conflict = calculateConflict();
+
+    const participants = (state.participants || []).map(p => ({
+        id: p.id,
+        name: p.name,
+        isBot: !!p.isBot,
+        teamId: p.team?.id || (typeof p.team === 'string' ? p.team : null),
+        teamName: p.team?.name || '-',
+        realRole: CONFIG.realRoles[p.realRole]?.name || '-',
+        gameRole: p.gameRole?.name || '-',
+        isCaptain: !!p.isCaptain
+    }));
+
+    const teams = activeTeams.map(team => {
         const teamData = getTeamData(team.id);
-        const status = teamData.confirmed ? '✓' : '○';
-        doc.text(`${status} ${team.name}: ИГС = ${igs.total.toFixed(1)}`, 25, y);
-        y += 6;
+        const members = getTeamMembers(team.id).map(m => ({
+            id: m.id,
+            name: m.name,
+            isBot: !!m.isBot,
+            realRole: CONFIG.realRoles[m.realRole]?.name || '-',
+            gameRole: m.gameRole?.name || '-',
+            isCaptain: isCaptain(m.id)
+        }));
+        const igs = calculateTeamIGS(team.id);
+        const budgetUsed = calculateBudgetUsed(teamData.parameters);
+        const phase = Number(state.session.phase);
+        const prog = getTeamDecisionProgress(team.id, phase);
+        return {
+            id: team.id,
+            name: team.name,
+            color: team.color,
+            igs,
+            budgetUsed,
+            confirmed: !!teamData.confirmed,
+            progress: prog,
+            parameters: teamData.parameters.map(p => ({ id: p.id, value: p.value })),
+            members
+        };
     });
-    
-    // Участники
-    doc.setFontSize(14);
-    y += 10;
-    doc.text('Участники:', 20, y);
-    
-    doc.setFontSize(10);
-    y += 10;
-    state.participants.forEach(p => {
-        const captain = p.isCaptain ? ' 👑' : '';
-        doc.text(`${p.name}${captain} - ${p.team?.name || '-'}`, 25, y);
-        y += 6;
-        if (y > 270) {
-            doc.addPage();
-            y = 20;
+
+    const decisions = normalizeDecisionsMap(state.participantDecisions || {});
+
+    return {
+        exportedAt: exportedAt.toISOString(),
+        session: {
+            code: state.session.code,
+            name: state.session.name,
+            createdAt: state.session.createdAt ? new Date(state.session.createdAt).toISOString?.() || String(state.session.createdAt) : null,
+            phase: state.session.phase,
+            projectScale: state.session.projectScale,
+            budgetLevel: state.session.budgetLevel,
+            budgetTotal: state.session.budgetTotal
+        },
+        summary: {
+            participantsCount: participants.length,
+            teamsCount: activeTeams.length,
+            consensusIGS: avgIGS ? avgIGS.total : null,
+            conflictD: conflict
+        },
+        teams,
+        participants,
+        decisions,
+        timeline: (state.timelineData || []).map(d => ({
+            time: d.time ? new Date(d.time).toISOString?.() || String(d.time) : null,
+            phase: d.phase,
+            teamIGS: d.teamIGS || {},
+            consensusIGS: d.consensusIGS,
+            conflict: d.conflict
+        })),
+        log: (state.log || []).map(e => ({
+            time: e.time ? new Date(e.time).toISOString?.() || String(e.time) : null,
+            type: e.type,
+            message: e.message
+        })),
+        config: {
+            igsWeights: CONFIG.igsWeights,
+            parameterCategories: CONFIG.parameterCategories.map(c => ({
+                id: c.id,
+                name: c.name,
+                source: c.source,
+                weight: c.weight,
+                params: c.params.map(p => ({ id: p.id, name: p.name, unit: p.unit, default: p.default, min: p.min, max: p.max, weight: p.weight }))
+            }))
         }
-    });
-    
-    doc.save('simulation_report.pdf');
+    };
 }
 
-function downloadFile(filename, content) {
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+function renderProtocolHTML(snapshot) {
+    const s = snapshot;
+    const allParams = getAllParameters();
+    const paramMeta = new Map(allParams.map(p => [p.id, p]));
+
+    const row = (k, v) => `<tr><td class="k">${escapeHtml(k)}</td><td class="v">${escapeHtml(v ?? '')}</td></tr>`;
+    const fmt = (v, digits = 1) => (typeof v === 'number' && !Number.isNaN(v)) ? v.toFixed(digits) : (v ?? '—');
+
+    const teamsHTML = s.teams.map(t => {
+        const paramsRows = t.parameters.map(p => {
+            const meta = paramMeta.get(p.id);
+            const name = meta?.name || p.id;
+            const unit = meta?.unit || '';
+            const def = meta?.default;
+            const delta = (typeof def === 'number') ? (p.value - def) : null;
+            return `<tr>
+                <td>${escapeHtml(p.id)}</td>
+                <td>${escapeHtml(name)}</td>
+                <td class="num">${fmt(p.value, 1)}${escapeHtml(unit)}</td>
+                <td class="num">${typeof def === 'number' ? fmt(def, 1) : '—'}${escapeHtml(unit)}</td>
+                <td class="num">${typeof delta === 'number' ? fmt(delta, 1) : '—'}${escapeHtml(unit)}</td>
+            </tr>`;
+        }).join('');
+
+        const membersRows = t.members.map(m => {
+            const cap = m.isCaptain ? '👑 ' : '';
+            return `<tr>
+                <td>${escapeHtml(cap + (m.name || '—'))}</td>
+                <td>${escapeHtml(m.realRole)}</td>
+                <td>${escapeHtml(m.gameRole)}</td>
+                <td>${escapeHtml(m.isBot ? 'Да' : 'Нет')}</td>
+            </tr>`;
+        }).join('');
+
+        // Решения участников в команде (полная раскладка параметров — длинно, но “протокол”)
+        const decisionsRows = t.members.map(m => {
+            const d = s.decisions?.[m.id];
+            const confirmed = d?.confirmed ? `Да (фаза ${d.confirmedPhase ?? '—'})` : 'Нет';
+            const updatedAt = d?.updatedAt || '—';
+            const myParams = (d?.parameters || []).map(pp => {
+                const meta = paramMeta.get(pp.id);
+                const unit = meta?.unit || '';
+                return `<tr>
+                    <td>${escapeHtml(m.name || '—')}</td>
+                    <td>${escapeHtml(pp.id)}</td>
+                    <td>${escapeHtml(meta?.name || pp.id)}</td>
+                    <td class="num">${fmt(pp.value, 1)}${escapeHtml(unit)}</td>
+                </tr>`;
+            }).join('');
+            return `<div class="subblock">
+                <div class="subhead">${escapeHtml(m.name || '—')} — подтверждение: <strong>${escapeHtml(confirmed)}</strong>, обновлено: ${escapeHtml(updatedAt)}</div>
+                <table class="tbl small">
+                    <thead><tr><th>Участник</th><th>ID</th><th>Параметр</th><th>Значение</th></tr></thead>
+                    <tbody>${myParams || `<tr><td colspan="4">Нет данных</td></tr>`}</tbody>
+                </table>
+            </div>`;
+        }).join('');
+
+        const prog = t.progress || { confirmed: 0, total: t.members.length };
+
+        return `
+        <div class="block">
+            <div class="h2">${escapeHtml(t.name)} (id: ${escapeHtml(t.id)})</div>
+            <div class="meta">ИГС: <strong>${fmt(t.igs?.total, 1)}</strong> · Конфликт D: <strong>${fmt(t.igs?.components?.D, 1)}</strong> · Бюджет: <strong>${fmt(t.budgetUsed, 0)}</strong> / ${escapeHtml(String(s.session.budgetTotal))}</div>
+            <div class="meta">Подтверждение команды (по участникам): <strong>${escapeHtml(String(prog.confirmed))}/${escapeHtml(String(prog.total))}</strong></div>
+
+            <div class="h3">Состав команды</div>
+            <table class="tbl">
+                <thead><tr><th>Имя</th><th>Реальная роль</th><th>Игровая роль</th><th>Бот</th></tr></thead>
+                <tbody>${membersRows || `<tr><td colspan="4">Нет участников</td></tr>`}</tbody>
+            </table>
+
+            <div class="h3">Агрегированное решение команды (среднее)</div>
+            <table class="tbl">
+                <thead><tr><th>ID</th><th>Параметр</th><th>Значение</th><th>Дефолт</th><th>Δ</th></tr></thead>
+                <tbody>${paramsRows}</tbody>
+            </table>
+
+            <div class="h3">Решения участников (подробно)</div>
+            ${decisionsRows || `<div class="meta">Нет данных решений</div>`}
+        </div>
+        `;
+    }).join('');
+
+    const participantsRows = s.participants.map(p => `<tr>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.teamName)}</td>
+        <td>${escapeHtml(p.realRole)}</td>
+        <td>${escapeHtml(p.gameRole)}</td>
+        <td>${escapeHtml(p.isCaptain ? 'Да' : 'Нет')}</td>
+        <td>${escapeHtml(p.isBot ? 'Да' : 'Нет')}</td>
+        <td class="mono">${escapeHtml(p.id)}</td>
+    </tr>`).join('');
+
+    const logRows = s.log.slice(0, 400).map(e => `<tr>
+        <td class="mono">${escapeHtml(e.time || '')}</td>
+        <td>${escapeHtml(e.type || '')}</td>
+        <td>${escapeHtml(e.message || '')}</td>
+    </tr>`).join('');
+
+    const timelineRows = s.timeline.map(d => `<tr>
+        <td class="mono">${escapeHtml(d.time || '')}</td>
+        <td class="num">${escapeHtml(String(d.phase ?? ''))}</td>
+        <td class="num">${fmt(d.consensusIGS, 1)}</td>
+        <td class="num">${fmt(d.conflict, 1)}</td>
+    </tr>`).join('');
+
+    return `
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<title>Протокол симуляции — ${escapeHtml(s.session.code || '')}</title>
+<style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #0f172a; margin: 0; padding: 24px; }
+    .title { font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+    .subtitle { color: #334155; margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .block { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; }
+    .h2 { font-size: 16px; font-weight: 800; margin: 0 0 6px; }
+    .h3 { font-size: 13px; font-weight: 800; margin: 14px 0 6px; }
+    .meta { font-size: 12px; color: #334155; margin: 4px 0; }
+    .tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .tbl th, .tbl td { border: 1px solid #e2e8f0; padding: 6px 8px; vertical-align: top; }
+    .tbl th { background: #f8fafc; text-align: left; }
+    .tbl.small { font-size: 11px; }
+    .num { text-align: right; white-space: nowrap; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; }
+    .kv { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .kv td { border: 1px solid #e2e8f0; padding: 6px 8px; }
+    .kv .k { width: 220px; background: #f8fafc; color: #334155; font-weight: 700; }
+    .subblock { border: 1px dashed #cbd5e1; border-radius: 10px; padding: 10px; margin: 8px 0; }
+    .subhead { font-size: 12px; color: #0f172a; margin-bottom: 6px; }
+    .pagebreak { page-break-before: always; }
+</style>
+</head>
+<body>
+    <div class="title">Подробный протокол симуляции (ИГС)</div>
+    <div class="subtitle">Сгенерировано: <span class="mono">${escapeHtml(s.exportedAt)}</span></div>
+
+    <div class="block">
+        <div class="h2">Сессия</div>
+        <table class="kv">
+            ${row('Название', s.session.name)}
+            ${row('Код', s.session.code)}
+            ${row('Создана', s.session.createdAt || '—')}
+            ${row('Фаза (финальная)', String(s.session.phase))}
+            ${row('Масштаб', s.session.projectScale)}
+            ${row('Бюджет', `${s.session.budgetTotal} (уровень: ${s.session.budgetLevel})`)}
+            ${row('Команд', String(s.summary.teamsCount))}
+            ${row('Участников', String(s.summary.participantsCount))}
+            ${row('ИГС консенсуса', fmt(s.summary.consensusIGS, 1))}
+            ${row('Конфликт D', fmt(s.summary.conflictD, 1))}
+        </table>
+    </div>
+
+    <div class="block">
+        <div class="h2">Участники (полный список)</div>
+        <table class="tbl">
+            <thead><tr><th>Имя</th><th>Команда</th><th>Реальная роль</th><th>Игровая роль</th><th>Капитан</th><th>Бот</th><th>ID</th></tr></thead>
+            <tbody>${participantsRows || `<tr><td colspan="7">Нет участников</td></tr>`}</tbody>
+        </table>
+    </div>
+
+    <div class="block">
+        <div class="h2">Динамика (по логам)</div>
+        <div class="meta">Точки формируются при добавлении записей в лог (см. `addToLog`).</div>
+        <table class="tbl">
+            <thead><tr><th>Время</th><th>Фаза</th><th>ИГС консенсуса</th><th>Конфликт</th></tr></thead>
+            <tbody>${timelineRows || `<tr><td colspan="4">Нет данных</td></tr>`}</tbody>
+        </table>
+    </div>
+
+    <div class="pagebreak"></div>
+    <div class="title">Команды и решения</div>
+    <div class="grid">
+        ${teamsHTML || `<div class="block">Нет команд</div>`}
+    </div>
+
+    <div class="pagebreak"></div>
+    <div class="block">
+        <div class="h2">Лог (первые 400 записей)</div>
+        <table class="tbl">
+            <thead><tr><th>Время</th><th>Тип</th><th>Сообщение</th></tr></thead>
+            <tbody>${logRows || `<tr><td colspan="3">Нет логов</td></tr>`}</tbody>
+        </table>
+        <div class="meta">Полный лог и данные решений можно выгрузить в JSON/XLSX.</div>
+    </div>
+</body>
+</html>`;
+}
+
+function exportProtocolHTML() {
+    const snap = buildProtocolSnapshot();
+    const html = renderProtocolHTML(snap);
+    const safeCode = (state.session.code || 'session').replaceAll(/[^a-zA-Z0-9_-]/g, '_');
+    downloadFile(`protocol_${safeCode}.html`, html, 'text/html;charset=utf-8');
+    showNotification('Протокол (HTML) скачан', 'success');
+}
+
+async function generatePDF(data) {
+    // Новый PDF: HTML→Canvas→PDF, чтобы кириллица была корректной
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+    const snap = buildProtocolSnapshot();
+    const html = renderProtocolHTML(snap);
+
+    // Временный контейнер вне экрана
+    const host = document.createElement('div');
+    host.style.position = 'fixed';
+    host.style.left = '-10000px';
+    host.style.top = '0';
+    host.style.width = '794px'; // примерно A4 в px при 96dpi
+    host.innerHTML = html;
+
+    // Берём только body содержимое из сгенерированного HTML
+    let bodyNode = null;
+    try {
+        bodyNode = host.querySelector('body');
+    } catch (_) {}
+    const renderNode = bodyNode || host;
+    document.body.appendChild(host);
+
+    if (typeof doc.html !== 'function') {
+        document.body.removeChild(host);
+        showNotification('PDF-протокол недоступен в этой сборке jsPDF. Скачайте HTML и распечатайте в PDF.', 'warning', 12000);
+        exportProtocolHTML();
+        return;
+    }
+
+    const safeCode = (state.session.code || 'session').replaceAll(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `protocol_${safeCode}.pdf`;
+
+    try {
+        await doc.html(renderNode, {
+            margin: [24, 24, 24, 24],
+            autoPaging: 'text',
+            html2canvas: {
+                scale: 0.8,
+                useCORS: true
+            },
+            callback: (pdf) => {
+                pdf.save(filename);
+                showNotification('Протокол (PDF) скачан', 'success');
+            }
+        });
+    } catch (e) {
+        console.error('❌ Ошибка генерации PDF протокола:', e);
+        showNotification('Не удалось сформировать PDF. Скачал HTML как запасной вариант.', 'error', 12000);
+        exportProtocolHTML();
+    } finally {
+        try { document.body.removeChild(host); } catch (_) {}
+    }
+}
+
+function downloadFile(filename, content, mimeType = 'text/plain;charset=utf-8') {
+    const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
