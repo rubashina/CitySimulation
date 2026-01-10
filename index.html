@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=20260110-5">
+    <link rel="stylesheet" href="styles.css?v=20260110-6">
 </head>
 <body>
     <noscript>
@@ -99,7 +99,7 @@
                 <div class="demo-link">
                     <button class="btn btn-ghost" id="demo-btn">Демо-режим</button>
                 </div>
-                <div class="build-badge" id="build-badge" aria-hidden="true">Build: 20260110-5 · JS: ожидается…</div>
+                <div class="build-badge" id="build-badge" aria-hidden="true">Build: 20260110-6 · JS: ожидается…</div>
             </div>
         </div>
         
@@ -617,6 +617,8 @@
         window.__CITYSIM_BOOT = false;
         window.__CITYSIM_LOADED = false;
         window.__CITYSIM_LAST_ERROR = null;
+        window.__CITYSIM_SCRIPT_URL = null;
+        window.__CITYSIM_SCRIPT_ERR = null;
         (function () {
             function $(sel) { return document.querySelector(sel); }
             function $all(sel) { return document.querySelectorAll(sel); }
@@ -640,14 +642,14 @@
                     var src = (ev && ev.filename) ? String(ev.filename) : '';
                     var line = (ev && ev.lineno) ? String(ev.lineno) : '';
                     window.__CITYSIM_LAST_ERROR = { msg: msg, src: src, line: line };
-                    setBadge('Build: 20260110-5 · JS ERROR: ' + msg + (line ? (' @' + line) : ''), true);
+                    setBadge('Build: 20260110-6 · JS ERROR: ' + msg + (line ? (' @' + line) : ''), true);
                 } catch (_) {}
             }, true);
             window.addEventListener('unhandledrejection', function (ev) {
                 try {
                     var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : 'Unhandled rejection';
                     window.__CITYSIM_LAST_ERROR = { msg: String(reason), src: 'promise', line: '' };
-                    setBadge('Build: 20260110-5 · JS ERROR: ' + String(reason), true);
+                    setBadge('Build: 20260110-6 · JS ERROR: ' + String(reason), true);
                 } catch (_) {}
             });
             document.addEventListener('click', function (e) {
@@ -659,20 +661,76 @@
             window.addEventListener('load', function () {
                 setTimeout(function () {
                     if (window.__CITYSIM_BOOT) {
-                        setBadge('Build: 20260110-5 · JS: OK', false);
+                        setBadge('Build: 20260110-6 · JS: OK', false);
                         return;
                     }
                     if (window.__CITYSIM_LOADED) {
                         var err = window.__CITYSIM_LAST_ERROR && window.__CITYSIM_LAST_ERROR.msg ? window.__CITYSIM_LAST_ERROR.msg : 'инициализация не завершилась';
-                        setBadge('Build: 20260110-5 · JS: app.js загрузился, но не инициализировался (' + err + ')', true);
+                        setBadge('Build: 20260110-6 · JS: app.js загрузился, но не инициализировался (' + err + ')', true);
                         return;
                     }
-                    setBadge('Build: 20260110-5 · JS: app.js НЕ загрузился/не выполнился (кэш/404/блокировка)', true);
+                    if (window.__CITYSIM_SCRIPT_ERR) {
+                        setBadge('Build: 20260110-6 · JS: app.js НЕ загрузился (' + window.__CITYSIM_SCRIPT_ERR + ')', true);
+                        return;
+                    }
+                    setBadge('Build: 20260110-6 · JS: app.js НЕ загрузился/не выполнился (кэш/404/блокировка)', true);
                 }, 1200);
             });
+
+            // Умный загрузчик app.js: пробуем несколько путей для GitHub Pages
+            (function loadAppJs() {
+                var rev = '20260110-6';
+                function uniq(arr) {
+                    var seen = {};
+                    var out = [];
+                    for (var i = 0; i < arr.length; i++) {
+                        var x = arr[i];
+                        if (!x || seen[x]) continue;
+                        seen[x] = true;
+                        out.push(x);
+                    }
+                    return out;
+                }
+                function firstSeg() {
+                    try {
+                        var seg = (location.pathname || '').split('/').filter(Boolean)[0];
+                        return seg || null;
+                    } catch (_) { return null; }
+                }
+                var seg = firstSeg();
+                var guessProject = seg ? ('/' + seg + '/app.js?v=' + rev) : null;
+                var candidates = uniq([
+                    'app.js?v=' + rev,
+                    './app.js?v=' + rev,
+                    guessProject,
+                    '/CitySimulation/app.js?v=' + rev,
+                    '/app.js?v=' + rev
+                ]);
+
+                var idx = 0;
+                function tryNext() {
+                    if (idx >= candidates.length) {
+                        window.__CITYSIM_SCRIPT_ERR = 'не найдено ни по одному пути';
+                        return;
+                    }
+                    var url = candidates[idx++];
+                    window.__CITYSIM_SCRIPT_URL = url;
+                    var s = document.createElement('script');
+                    s.src = url;
+                    s.async = false;
+                    s.onload = function () {
+                        // app.js сам выставит __CITYSIM_LOADED/__CITYSIM_BOOT и обновит бейдж
+                    };
+                    s.onerror = function () {
+                        window.__CITYSIM_SCRIPT_ERR = 'ошибка загрузки: ' + url;
+                        tryNext();
+                    };
+                    document.body.appendChild(s);
+                }
+                tryNext();
+            })();
         })();
     </script>
-    <script src="app.js?v=20260110-5"></script>
 </body>
 </html>
 
