@@ -4200,14 +4200,15 @@ function downloadFile(filename, content, mimeType = 'text/plain;charset=utf-8') 
 
 document.addEventListener('DOMContentLoaded', () => {
     try {
+        try { window.__CITYSIM_BOOT = true; } catch (_) {}
         console.log('🚀 Инициализация симулятора...');
-        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-3');
+        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-4');
         console.log('📊 Категорий параметров:', CONFIG.parameterCategories.length);
         console.log('👥 Команд:', CONFIG.teams.length);
 
         try {
             const badge = document.getElementById('build-badge');
-            if (badge) badge.textContent = 'Build: 20260110-3';
+            if (badge) badge.textContent = 'Build: 20260110-4 · JS: OK';
         } catch (_) {}
         
         // Инициализируем Firebase
