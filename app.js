@@ -2040,7 +2040,9 @@ function renderRoleCard() {
     if (gameRole && team) {
         const captainBadge = userIsCaptain ? ' 👑' : '';
         $('#role-name').textContent = `${gameRole.icon} ${gameRole.name}${captainBadge}`;
-        $('#role-desc').textContent = `${gameRole.desc} Ваши настройки будут агрегироваться с решениями команды (среднее).`;
+        const base = String(gameRole.desc || '').trim();
+        const baseWithDot = base.endsWith('.') ? base : (base ? base + '.' : '');
+        $('#role-desc').textContent = `${baseWithDot} Ваши предложения будут агрегироваться с решениями всех членов вашей команды.`;
         $('#role-team').textContent = team.name + (userIsCaptain ? ' (капитан)' : '');
         $('#role-team').className = `role-team team-${team.id}`;
         roleCard.classList.remove('hidden');
