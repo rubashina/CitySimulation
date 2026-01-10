@@ -1633,10 +1633,10 @@ function initLoginScreen() {
         const joinBtn = $('#join-btn');
         const prevText = joinBtn?.textContent || '';
         try {
-            if (joinBtn?.dataset?.busy === '1') return;
-            if (joinBtn) {
-                joinBtn.dataset.busy = '1';
-                joinBtn.disabled = true;
+        if (joinBtn?.dataset?.busy === '1') return;
+        if (joinBtn) {
+            joinBtn.dataset.busy = '1';
+            joinBtn.disabled = true;
                 joinBtn.textContent = 'Подключаюсь…';
             }
 
@@ -1646,22 +1646,22 @@ function initLoginScreen() {
             const code = (codeEl?.value || '').trim().toUpperCase();
             const name = (nameEl?.value || '').trim();
             const realRole = (roleEl?.value || '');
-
-            if (!code || code.length !== 6) {
-                showNotification('Введите корректный код сессии (6 символов)', 'error');
-                return;
-            }
-            if (!name) {
-                showNotification('Введите ваше имя', 'error');
-                return;
-            }
-            if (!realRole) {
-                showNotification('Выберите вашу реальную роль', 'error');
-                return;
-            }
-
-            showNotification('Подключаюсь к сессии…', 'info');
-            joinSession(code, name, realRole)
+        
+        if (!code || code.length !== 6) {
+            showNotification('Введите корректный код сессии (6 символов)', 'error');
+            return;
+        }
+        if (!name) {
+            showNotification('Введите ваше имя', 'error');
+            return;
+        }
+        if (!realRole) {
+            showNotification('Выберите вашу реальную роль', 'error');
+            return;
+        }
+        
+        showNotification('Подключаюсь к сессии…', 'info');
+        joinSession(code, name, realRole)
                 .catch(() => {}) // joinSession сам показывает сообщения об ошибках
                 .finally(() => {});
         } catch (e) {
@@ -1681,29 +1681,29 @@ function initLoginScreen() {
         const createBtn = $('#create-btn');
         const prevText = createBtn?.textContent || '';
         try {
-            if (createBtn?.dataset?.busy === '1') return;
-            if (createBtn) {
-                createBtn.dataset.busy = '1';
-                createBtn.disabled = true;
+        if (createBtn?.dataset?.busy === '1') return;
+        if (createBtn) {
+            createBtn.dataset.busy = '1';
+            createBtn.disabled = true;
                 createBtn.textContent = 'Создаю…';
             }
 
             const sessionName = ($('#session-name')?.value || '').trim() || 'Новый проект';
             const customCode = ($('#session-code-input')?.value || '').trim().toUpperCase();
             const moderatorName = ($('#moderator-name')?.value || '').trim() || 'Модератор';
-
-            // Получаем настройки проекта из select
-            const projectScale = $('#project-scale')?.value || 'medium';
-            const budgetLevel = $('#budget-level')?.value || 'medium';
-
-            // Валидация кода, если введён
-            if (customCode && !/^[A-Z0-9]{1,6}$/.test(customCode)) {
-                showNotification('Код сессии: только латиница и цифры (до 6 символов)', 'error');
-                return;
-            }
-
-            showNotification('Создаю сессию…', 'info');
-            Promise.resolve(createSession(sessionName, moderatorName, customCode, projectScale, budgetLevel))
+        
+        // Получаем настройки проекта из select
+        const projectScale = $('#project-scale')?.value || 'medium';
+        const budgetLevel = $('#budget-level')?.value || 'medium';
+        
+        // Валидация кода, если введён
+        if (customCode && !/^[A-Z0-9]{1,6}$/.test(customCode)) {
+            showNotification('Код сессии: только латиница и цифры (до 6 символов)', 'error');
+            return;
+        }
+        
+        showNotification('Создаю сессию…', 'info');
+        Promise.resolve(createSession(sessionName, moderatorName, customCode, projectScale, budgetLevel))
                 .catch(() => {})
                 .finally(() => {});
         } catch (e) {
@@ -2176,7 +2176,7 @@ function renderParameters() {
                     </div>
                 </div>
                 ${!isInputPhase
-                    ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
+                        ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
                     : (isConfirmed
                         ? '<div class="param-notice">Вы подтвердили решение — изменения заблокированы до следующего раунда</div>'
                         : (isLocked
@@ -2206,7 +2206,7 @@ function renderParameters() {
                     });
                     const budgetUsed = calculateBudgetUsed(candidateAgg);
                     const budgetTotal = state.session.budgetTotal;
-
+                    
                     if (budgetUsed > budgetTotal) {
                         // Откат (нельзя выйти за бюджет)
                         if (pRow) pRow.value = prevValue;
@@ -2218,9 +2218,9 @@ function renderParameters() {
                         updateConfirmButton();
                         return;
                     }
-
+                    
                     card.querySelector(`#value-${param.id}`).textContent = newValue + param.unit;
-
+                    
                     // Пересчёт агрегации команды и UI
                     recomputeTeamAggregate(teamId);
                     debounceSaveDecision(state.user.id);
@@ -2467,14 +2467,14 @@ function updateConfirmButton() {
         statusEl.textContent = getPhaseStatusMessage(currentPhase);
         return;
     }
-
+    
     const isConfirmed = isParticipantConfirmedForPhase(state.user.id, currentPhase);
     if (isConfirmed) {
         btn.disabled = true;
         statusEl.textContent = 'Вы подтвердили своё решение ✓';
         return;
     }
-
+    
     btn.disabled = false;
     const teamId = state.user?.team?.id;
     if (teamId) {
@@ -2492,7 +2492,7 @@ function confirmDecision() {
         showNotification('Подтверждение доступно только в фазах 1 и 4', 'warning');
         return;
     }
-
+    
     const teamId = state.user?.team?.id || null;
     const decision = ensureParticipantDecision(state.user.id, teamId);
     decision.confirmed = true;
@@ -3351,11 +3351,11 @@ function applyEventEffect(event) {
                 recomputeAllTeamAggregates();
             } else {
                 // fallback: старый режим (команды напрямую)
-                Object.keys(state.teamsData).forEach(teamId => {
-                    const teamData = state.teamsData[teamId];
-                    const param = teamData.parameters.find(p => p.id === event.params.parameter);
-                    if (param) param.value = event.params.value;
-                });
+            Object.keys(state.teamsData).forEach(teamId => {
+                const teamData = state.teamsData[teamId];
+                const param = teamData.parameters.find(p => p.id === event.params.parameter);
+                if (param) param.value = event.params.value;
+            });
             }
             break;
     }
@@ -3755,7 +3755,7 @@ function exportData(format) {
     }
     
     if (toast) {
-        showNotification(`Данные экспортированы в ${format.toUpperCase()}`, 'success');
+    showNotification(`Данные экспортированы в ${format.toUpperCase()}`, 'success');
     }
 }
 
@@ -4095,7 +4095,7 @@ function renderProtocolHTML(snapshot) {
 
     <div class="block">
         <div class="h2">Динамика (по логам)</div>
-        <div class="meta">Точки формируются при добавлении записей в лог (см. `addToLog`).</div>
+        <div class="meta">Точки формируются при добавлении записей в лог (см. <code>addToLog</code>).</div>
         <table class="tbl">
             <thead><tr><th>Время</th><th>Фаза</th><th>ИГС консенсуса</th><th>Конфликт</th></tr></thead>
             <tbody>${timelineRows || `<tr><td colspan="4">Нет данных</td></tr>`}</tbody>
