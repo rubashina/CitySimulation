@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=20260110-4">
+    <link rel="stylesheet" href="styles.css?v=20260110-5">
 </head>
 <body>
     <noscript>
@@ -99,7 +99,7 @@
                 <div class="demo-link">
                     <button class="btn btn-ghost" id="demo-btn">Демо-режим</button>
                 </div>
-                <div class="build-badge" id="build-badge" aria-hidden="true">Build: 20260110-4 · JS: ожидается…</div>
+                <div class="build-badge" id="build-badge" aria-hidden="true">Build: 20260110-5 · JS: ожидается…</div>
             </div>
         </div>
         
@@ -615,9 +615,17 @@
     <script>
         // Минимальная самодиагностика/фолбэк (работает даже если app.js не загрузился)
         window.__CITYSIM_BOOT = false;
+        window.__CITYSIM_LOADED = false;
+        window.__CITYSIM_LAST_ERROR = null;
         (function () {
             function $(sel) { return document.querySelector(sel); }
             function $all(sel) { return document.querySelectorAll(sel); }
+            function setBadge(text, isError) {
+                var badge = document.getElementById('build-badge');
+                if (!badge) return;
+                badge.textContent = text;
+                if (isError) badge.style.color = '#fca5a5';
+            }
             function switchTab(tab) {
                 $all('.login-tabs .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
                 const joinForm = $('#join-form');
@@ -625,6 +633,23 @@
                 if (joinForm) joinForm.classList.toggle('hidden', tab !== 'join');
                 if (createForm) createForm.classList.toggle('hidden', tab !== 'create');
             }
+            // Ловим JS-ошибки (включая SyntaxError при парсинге app.js)
+            window.addEventListener('error', function (ev) {
+                try {
+                    var msg = (ev && ev.message) ? String(ev.message) : 'Unknown error';
+                    var src = (ev && ev.filename) ? String(ev.filename) : '';
+                    var line = (ev && ev.lineno) ? String(ev.lineno) : '';
+                    window.__CITYSIM_LAST_ERROR = { msg: msg, src: src, line: line };
+                    setBadge('Build: 20260110-5 · JS ERROR: ' + msg + (line ? (' @' + line) : ''), true);
+                } catch (_) {}
+            }, true);
+            window.addEventListener('unhandledrejection', function (ev) {
+                try {
+                    var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : 'Unhandled rejection';
+                    window.__CITYSIM_LAST_ERROR = { msg: String(reason), src: 'promise', line: '' };
+                    setBadge('Build: 20260110-5 · JS ERROR: ' + String(reason), true);
+                } catch (_) {}
+            });
             document.addEventListener('click', function (e) {
                 const btn = e.target && e.target.closest && e.target.closest('.login-tabs .tab-btn');
                 if (btn && btn.dataset && btn.dataset.tab) {
@@ -633,16 +658,21 @@
             }, true);
             window.addEventListener('load', function () {
                 setTimeout(function () {
-                    const badge = document.getElementById('build-badge');
-                    if (badge && !window.__CITYSIM_BOOT) {
-                        badge.textContent = 'Build: 20260110-4 · JS: app.js НЕ запустился (кэш/ошибка/блокировка)';
-                        badge.style.color = '#fca5a5';
+                    if (window.__CITYSIM_BOOT) {
+                        setBadge('Build: 20260110-5 · JS: OK', false);
+                        return;
                     }
+                    if (window.__CITYSIM_LOADED) {
+                        var err = window.__CITYSIM_LAST_ERROR && window.__CITYSIM_LAST_ERROR.msg ? window.__CITYSIM_LAST_ERROR.msg : 'инициализация не завершилась';
+                        setBadge('Build: 20260110-5 · JS: app.js загрузился, но не инициализировался (' + err + ')', true);
+                        return;
+                    }
+                    setBadge('Build: 20260110-5 · JS: app.js НЕ загрузился/не выполнился (кэш/404/блокировка)', true);
                 }, 1200);
             });
         })();
     </script>
-    <script src="app.js?v=20260110-4"></script>
+    <script src="app.js?v=20260110-5"></script>
 </body>
 </html>
 
