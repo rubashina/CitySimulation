@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=20260110-7">
+    <link rel="stylesheet" href="styles.css?v=20260110-8">
 </head>
 <body>
     <noscript>
@@ -99,7 +99,7 @@
                 <div class="demo-link">
                     <button class="btn btn-ghost" id="demo-btn">Демо-режим</button>
                 </div>
-                <div class="build-badge" id="build-badge" aria-hidden="true">Build: 20260110-7 · JS: ожидается…</div>
+                <div class="build-badge" id="build-badge" aria-hidden="true">Build: 20260110-8 · JS: ожидается…</div>
             </div>
         </div>
         
@@ -642,14 +642,14 @@
                     var src = (ev && ev.filename) ? String(ev.filename) : '';
                     var line = (ev && ev.lineno) ? String(ev.lineno) : '';
                     window.__CITYSIM_LAST_ERROR = { msg: msg, src: src, line: line };
-                    setBadge('Build: 20260110-7 · JS ERROR: ' + msg + (line ? (' @' + line) : '') + (src ? (' · ' + src) : ''), true);
+                    setBadge('Build: 20260110-8 · JS ERROR: ' + msg + (line ? (' @' + line) : '') + (src ? (' · ' + src) : ''), true);
                 } catch (_) {}
             }, true);
             window.addEventListener('unhandledrejection', function (ev) {
                 try {
                     var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : 'Unhandled rejection';
                     window.__CITYSIM_LAST_ERROR = { msg: String(reason), src: 'promise', line: '' };
-                    setBadge('Build: 20260110-7 · JS ERROR: ' + String(reason), true);
+                    setBadge('Build: 20260110-8 · JS ERROR: ' + String(reason), true);
                 } catch (_) {}
             });
             document.addEventListener('click', function (e) {
@@ -661,25 +661,25 @@
             window.addEventListener('load', function () {
                 setTimeout(function () {
                     if (window.__CITYSIM_BOOT) {
-                        setBadge('Build: 20260110-7 · JS: OK', false);
+                        setBadge('Build: 20260110-8 · JS: OK', false);
                         return;
                     }
                     if (window.__CITYSIM_LOADED) {
                         var err = window.__CITYSIM_LAST_ERROR && window.__CITYSIM_LAST_ERROR.msg ? window.__CITYSIM_LAST_ERROR.msg : 'инициализация не завершилась';
-                        setBadge('Build: 20260110-7 · JS: app.js загрузился, но не инициализировался (' + err + ')', true);
+                        setBadge('Build: 20260110-8 · JS: app.js загрузился, но не инициализировался (' + err + ')', true);
                         return;
                     }
                     if (window.__CITYSIM_SCRIPT_ERR) {
-                        setBadge('Build: 20260110-7 · JS: app.js НЕ загрузился (' + window.__CITYSIM_SCRIPT_ERR + ')', true);
+                        setBadge('Build: 20260110-8 · JS: app.js НЕ загрузился (' + window.__CITYSIM_SCRIPT_ERR + ')', true);
                         return;
                     }
-                    setBadge('Build: 20260110-7 · JS: app.js НЕ загрузился/не выполнился (кэш/404/блокировка)', true);
+                    setBadge('Build: 20260110-8 · JS: app.js НЕ загрузился/не выполнился (кэш/404/блокировка)', true);
                 }, 1200);
             });
 
             // Умный загрузчик app.js: пробуем несколько путей для GitHub Pages
             (function loadAppJs() {
-                var rev = '20260110-7';
+                var rev = '20260110-8';
                 function uniq(arr) {
                     var seen = {};
                     var out = [];
@@ -712,12 +712,12 @@
                 function tryNext() {
                     if (idx >= candidates.length) {
                         window.__CITYSIM_SCRIPT_ERR = 'не найдено ни по одному пути';
-                        setBadge('Build: 20260110-7 · JS: app.js НЕ найден. Путь: ' + (location && location.pathname ? location.pathname : ''), true);
+                        setBadge('Build: 20260110-8 · JS: app.js НЕ найден. Путь: ' + (location && location.pathname ? location.pathname : ''), true);
                         return;
                     }
                     var url = candidates[idx++];
                     window.__CITYSIM_SCRIPT_URL = url;
-                    setBadge('Build: 20260110-7 · JS: загружаю ' + url + ' (path=' + (location && location.pathname ? location.pathname : '') + ')', false);
+                    setBadge('Build: 20260110-8 · JS: загружаю ' + url + ' (path=' + (location && location.pathname ? location.pathname : '') + ')', false);
                     var s = document.createElement('script');
                     s.src = url;
                     s.async = false;
@@ -728,7 +728,7 @@
                         if (attemptTimer) { clearTimeout(attemptTimer); attemptTimer = null; }
                         if (kind === 'timeout') {
                             window.__CITYSIM_SCRIPT_ERR = 'таймаут загрузки: ' + url;
-                            setBadge('Build: 20260110-7 · JS: таймаут ' + url, true);
+                        setBadge('Build: 20260110-8 · JS: таймаут ' + url, true);
                             tryNext();
                         }
                     }
@@ -740,7 +740,7 @@
                     };
                     s.onerror = function () {
                         window.__CITYSIM_SCRIPT_ERR = 'ошибка загрузки: ' + url;
-                        setBadge('Build: 20260110-7 · JS: ошибка загрузки ' + url, true);
+                        setBadge('Build: 20260110-8 · JS: ошибка загрузки ' + url, true);
                         if (attemptTimer) { clearTimeout(attemptTimer); attemptTimer = null; }
                         tryNext();
                     };

@@ -4201,24 +4201,24 @@ function downloadFile(filename, content, mimeType = 'text/plain;charset=utf-8') 
 // ИНИЦИАЛИЗАЦИЯ
 // =====================================================
 
-document.addEventListener('DOMContentLoaded', () => {
+function bootCitySim() {
     try {
         try { window.__CITYSIM_BOOT = true; } catch (_) {}
         console.log('🚀 Инициализация симулятора...');
-        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-7');
+        console.log('🧩 Build:', '2026-01-10', 'rev', '20260110-8');
         console.log('📊 Категорий параметров:', CONFIG.parameterCategories.length);
         console.log('👥 Команд:', CONFIG.teams.length);
 
         try {
             const badge = document.getElementById('build-badge');
-            if (badge) badge.textContent = 'Build: 20260110-7 · JS: OK';
+            if (badge) badge.textContent = 'Build: 20260110-8 · JS: OK';
         } catch (_) {}
-        
+
         // Инициализируем Firebase
         initFirebase();
-        
+
         initLoginScreen();
-        
+
         // Страховка: если по какой-то причине initLoginScreen не навесил handlers,
         // делаем делегирование кликов на уровне документа.
         document.addEventListener('click', (e) => {
@@ -4244,12 +4244,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 initLoginScreen();
             } catch (_) {}
         }, true);
-        
+
         initEndgameOverlay();
         console.log('✅ Симулятор загружен');
     } catch (error) {
         console.error('❌ Ошибка инициализации:', error);
         alert('Ошибка загрузки приложения: ' + error.message);
     }
-});
+}
+
+// ВАЖНО: app.js может быть загружен динамически ПОСЛЕ DOMContentLoaded (GitHub Pages / кэш / fallback).
+// Поэтому если документ уже готов — стартуем сразу.
+try {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootCitySim);
+    } else {
+        bootCitySim();
+    }
+} catch (_) {
+    // worst-case: всё равно попробуем
+    try { bootCitySim(); } catch (_) {}
+}
 
