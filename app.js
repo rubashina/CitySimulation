@@ -1596,6 +1596,23 @@ function showScreen(screenId) {
 // =====================================================
 
 function initLoginScreen() {
+    // Подстраховка: на старых/битых состояниях кнопки могли остаться disabled/busy
+    try {
+        const joinBtn = $('#join-btn');
+        if (joinBtn) { joinBtn.disabled = false; joinBtn.dataset.busy = '0'; joinBtn.textContent = joinBtn.textContent || 'Войти как участник'; }
+        const createBtn = $('#create-btn');
+        if (createBtn) { createBtn.disabled = false; createBtn.dataset.busy = '0'; createBtn.textContent = createBtn.textContent || '🚀 Создать сессию'; }
+    } catch (_) {}
+
+    // Стартовое состояние вкладок (если HTML/кэш “уехал”)
+    try {
+        const joinForm = $('#join-form') || $('#join-form'.replace('#',''));
+        const createForm = $('#create-form') || $('#create-form'.replace('#',''));
+        if (joinForm && joinForm.classList) joinForm.classList.remove('hidden');
+        if (createForm && createForm.classList) createForm.classList.add('hidden');
+        $$('.login-tabs .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'join'));
+    } catch (_) {}
+
     // Табы входа
     $$('.login-tabs .tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
