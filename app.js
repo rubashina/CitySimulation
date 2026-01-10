@@ -752,9 +752,62 @@ function ensureParticipantDecision(participantId, teamId = null) {
         parameters: createDefaultParametersArray(),
         confirmed: false,
         confirmedPhase: null,
-        updatedAt: null
+        updatedAt: null,
+        // baseline параметров на начало текущего раунда (фазы 1/4)
+        baselinePhase: null,
+        baselineParameters: null,
+        baselineAt: null
     };
     return state.participantDecisions[participantId];
+}
+
+function cloneParametersArray(arr) {
+    if (!Array.isArray(arr)) return [];
+    return arr.map(p => ({ id: p.id, value: Number(p.value) }));
+}
+
+function ensureBaselineForCurrentRound(phase) {
+    const currentPhase = Number(phase);
+    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
+    if (!isInputPhase) return;
+    const decision = ensureParticipantDecision(state.user.id, state.user?.team?.id || null);
+    if (!decision) return;
+    if (decision.baselinePhase !== currentPhase || !Array.isArray(decision.baselineParameters)) {
+        decision.baselinePhase = currentPhase;
+        decision.baselineParameters = cloneParametersArray(decision.parameters);
+        decision.baselineAt = new Date().toISOString();
+    }
+}
+
+function getBaselineValue(decision, paramId, fallbackValue) {
+    const base = decision?.baselineParameters?.find?.(p => p.id === paramId);
+    const v = base ? Number(base.value) : fallbackValue;
+    return Number.isNaN(v) ? fallbackValue : v;
+}
+
+function countChangedParams(decision) {
+    if (!decision || !Array.isArray(decision.parameters) || !Array.isArray(decision.baselineParameters)) return 0;
+    let c = 0;
+    decision.parameters.forEach(p => {
+        const base = decision.baselineParameters.find(b => b.id === p.id);
+        const baseVal = base ? Number(base.value) : Number(p.value);
+        if (Number(p.value) !== baseVal) c += 1;
+    });
+    return c;
+}
+
+function resetDecisionToBaseline(decision, paramId = null) {
+    if (!decision || !Array.isArray(decision.baselineParameters)) return false;
+    if (!Array.isArray(decision.parameters)) decision.parameters = createDefaultParametersArray();
+    if (!paramId) {
+        decision.parameters = cloneParametersArray(decision.baselineParameters);
+        return true;
+    }
+    const base = decision.baselineParameters.find(b => b.id === paramId);
+    if (!base) return false;
+    const row = decision.parameters.find(p => p.id === paramId);
+    if (row) row.value = Number(base.value);
+    return true;
 }
 
 function getDecisionForParticipant(participantId) {
@@ -2003,6 +2056,7 @@ function startDemo() {
 function initParticipantScreen() {
     updateParticipantHeader();
     renderRoleCard();
+    try { ensureBaselineForCurrentRound(state.session.phase); } catch (_) {}
     renderParameters();
     initHistoryPanel();
     initTeamPanel();
@@ -2143,6 +2197,46 @@ function renderParameters() {
     const decision = ensureParticipantDecision(state.user.id, teamId);
     const participantParams = decision?.parameters || createDefaultParametersArray();
     const isConfirmed = isParticipantConfirmedForPhase(state.user.id, currentPhase);
+    const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+
+    // baseline на начало раунда (для лимита и откатов)
+    if (isInputPhase && !isConfirmed) {
+        try { ensureBaselineForCurrentRound(currentPhase); } catch (_) {}
+    }
+    const changedCount = (isInputPhase && decision?.baselinePhase === currentPhase && Array.isArray(decision?.baselineParameters))
+        ? countChangedParams(decision)
+        : 0;
+
+    // Кнопка "сброс к началу раунда"
+    const resetBtn = $('#reset-round-btn');
+    if (resetBtn) {
+        resetBtn.style.display = isInputPhase ? 'inline-flex' : 'none';
+        resetBtn.disabled = !isInputPhase || isConfirmed || !Array.isArray(decision?.baselineParameters) || decision?.baselinePhase !== currentPhase;
+        if (!resetBtn.dataset.bound) {
+            resetBtn.dataset.bound = '1';
+            resetBtn.addEventListener('click', () => {
+                const phase = Number(state.session.phase);
+                const isInput = (phase === 1 || phase === 4);
+                if (!isInput) return;
+                const d = ensureParticipantDecision(state.user.id, state.user.team?.id || null);
+                if (!d || d.baselinePhase !== phase || !Array.isArray(d.baselineParameters)) {
+                    showNotification('Нет сохранённого состояния начала раунда', 'warning');
+                    return;
+                }
+                if (isParticipantConfirmedForPhase(state.user.id, phase)) {
+                    showNotification('Вы уже подтвердили решение — откат недоступен', 'warning');
+                    return;
+                }
+                resetDecisionToBaseline(d);
+                debounceSaveDecision(state.user.id);
+                if (teamId) recomputeTeamAggregate(teamId);
+                updateIGSDisplay();
+                updateConfirmButton();
+                renderParameters();
+                showNotification('Сброшено к началу раунда', 'info');
+            });
+        }
+    }
 
     // Для подсказок: текущие командные значения (среднее)
     const teamAgg = teamId ? computeAggregatedTeamParameters(teamId) : [];
@@ -2192,9 +2286,12 @@ function renderParameters() {
             const myParam = participantParams.find(p => p.id === param.id);
             const value = (myParam && typeof myParam.value === 'number') ? myParam.value : param.default;
             const teamValue = teamAggMap.has(param.id) ? teamAggMap.get(param.id) : param.default;
+            const baselineValue = getBaselineValue(decision, param.id, value);
+            const isChanged = (isInputPhase && decision?.baselinePhase === currentPhase) ? (Number(value) !== Number(baselineValue)) : false;
 
             // Ползунок неактивен если заблокирован/не фаза ввода/участник уже подтвердил в этой фазе
-            const isDisabled = isLocked || !isInputPhase || isConfirmed;
+            const blockedByMoveLimit = isInputPhase && !isConfirmed && !isChanged && (changedCount >= moveLimit);
+            const isDisabled = isLocked || !isInputPhase || isConfirmed || blockedByMoveLimit;
             
             const card = document.createElement('div');
             card.className = `param-card ${isLocked ? 'locked' : ''} ${isDisabled ? 'readonly' : ''}`;
@@ -2202,7 +2299,10 @@ function renderParameters() {
             card.innerHTML = `
                 <div class="param-header">
                     <span class="param-name">${param.name}</span>
-                    <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
+                    <span class="param-header-right">
+                        <button class="param-reset-btn" type="button" data-reset-param="${param.id}" title="Сбросить к началу раунда" ${(!isInputPhase || isConfirmed || !isChanged) ? 'disabled' : ''}>↺</button>
+                        <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
+                    </span>
                 </div>
                 <p class="param-desc">${param.desc}</p>
                 <div class="param-subvalue">Командное (среднее): ${Number(teamValue).toFixed(0)}${param.unit}</div>
@@ -2222,10 +2322,30 @@ function renderParameters() {
                         ? '<div class="param-notice">Вы подтвердили решение — изменения заблокированы до следующего раунда</div>'
                         : (isLocked
                             ? '<div class="param-notice">Параметр заблокирован событием/ограничением</div>'
-                            : '<div class="param-notice">Настройте параметр — вклад будет учтён в среднем по команде</div>'))}
+                            : (blockedByMoveLimit
+                                ? `<div class="param-notice">Лимит изменений: ${moveLimit}. Верните один из изменённых параметров к началу раунда, чтобы изменить другой.</div>`
+                                : `<div class="param-notice">Изменено параметров: ${changedCount}/${moveLimit}. Можно откатить параметр ↺ к началу раунда.</div>`)))}
             `;
             
             body.appendChild(card);
+
+            // reset одной настройки к baseline
+            const resetOneBtn = card.querySelector('.param-reset-btn');
+            if (resetOneBtn && !resetOneBtn.disabled) {
+                resetOneBtn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    if (!isInputPhase || isConfirmed) return;
+                    const d = ensureParticipantDecision(state.user.id, teamId);
+                    if (!d || d.baselinePhase !== currentPhase) return;
+                    resetDecisionToBaseline(d, param.id);
+                    debounceSaveDecision(state.user.id);
+                    if (teamId) recomputeTeamAggregate(teamId);
+                    updateIGSDisplay();
+                    updateConfirmButton();
+                    renderParameters();
+                });
+            }
             
             // Обработчик слайдера (каждый участник)
             if (!isLocked && isInputPhase && !isConfirmed) {
@@ -2237,6 +2357,21 @@ function renderParameters() {
                     const myParams = myDecision?.parameters || (myDecision.parameters = createDefaultParametersArray());
                     const pRow = myParams.find(p => p.id === param.id);
                     const prevValue = pRow ? pRow.value : value;
+
+                    // Лимит: считаем по числу изменённых параметров относительно baseline
+                    if (myDecision?.baselinePhase === currentPhase && Array.isArray(myDecision?.baselineParameters)) {
+                        const before = countChangedParams(myDecision);
+                        const baseVal = getBaselineValue(myDecision, param.id, prevValue);
+                        const wasChanged = Number(prevValue) !== Number(baseVal);
+                        const willBeChanged = Number(newValue) !== Number(baseVal);
+                        if (!wasChanged && willBeChanged && before >= moveLimit) {
+                            // не даём добавить новый "изменённый параметр"
+                            e.target.value = String(prevValue);
+                            showNotification(`Лимит изменений: ${moveLimit}. Сначала верните один параметр к началу раунда (↺).`, 'warning');
+                            return;
+                        }
+                    }
+
                     if (pRow) pRow.value = newValue;
 
                     // Бюджет считаем по КОМАНДНОМУ (среднему) решению
@@ -2267,6 +2402,16 @@ function renderParameters() {
                     debounceSaveDecision(state.user.id);
                     updateIGSDisplay();
                     updateConfirmButton();
+
+                    // Если достигли/освободили лимит — перерисуем, чтобы заблокировать/разблокировать остальные
+                    try {
+                        if (myDecision?.baselinePhase === currentPhase && Array.isArray(myDecision?.baselineParameters)) {
+                            const after = countChangedParams(myDecision);
+                            if ((after >= moveLimit && changedCount < moveLimit) || (after < moveLimit && changedCount >= moveLimit)) {
+                                renderParameters();
+                            }
+                        }
+                    } catch (_) {}
                 });
             }
         });
@@ -2758,6 +2903,8 @@ function updatePhaseUI() {
     // Для участника всегда обновляем баннер события + статус кнопки
     // (это исправляет кейс, когда фазу обновил общий listener, а phase-listener не сработал из-за гонки)
     if (!state.user.isModerator) {
+        // Снимок baseline на начало раунда ввода (фазы 1/4)
+        try { ensureBaselineForCurrentRound(phase); } catch (_) {}
         updateEventBanner(phase);
         updateConfirmButton();
     }

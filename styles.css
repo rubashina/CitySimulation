@@ -674,6 +674,35 @@ h4 { font-size: 1rem; }
     margin-bottom: 1rem;
 }
 
+.param-header-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.param-reset-btn {
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(15, 23, 42, 0.35);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    padding: 0.15rem 0.45rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    line-height: 1.2;
+    transition: all var(--transition-fast);
+}
+
+.param-reset-btn:hover:not(:disabled) {
+    border-color: rgba(59, 130, 246, 0.35);
+    color: var(--text-primary);
+    transform: translateY(-1px);
+}
+
+.param-reset-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .param-category {
     margin-bottom: 0.75rem;
     border-radius: var(--radius-lg);
@@ -987,6 +1016,19 @@ h4 { font-size: 1rem; }
     margin-top: 1rem;
     font-size: 0.875rem;
     color: var(--text-secondary);
+}
+
+/* Parameters header (title + reset button) */
+.parameters-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.parameters-header h3 {
+    margin: 0;
 }
 
 /* History Panel */
