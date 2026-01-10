@@ -1609,70 +1609,93 @@ function initLoginScreen() {
     });
     
     // Присоединиться к сессии
-    $('#join-btn').addEventListener('click', () => {
+    onId('join-btn', 'click', () => {
         const joinBtn = $('#join-btn');
-        if (joinBtn?.dataset?.busy === '1') return;
-        if (joinBtn) {
-            joinBtn.dataset.busy = '1';
-            joinBtn.disabled = true;
+        const prevText = joinBtn?.textContent || '';
+        try {
+            if (joinBtn?.dataset?.busy === '1') return;
+            if (joinBtn) {
+                joinBtn.dataset.busy = '1';
+                joinBtn.disabled = true;
+                joinBtn.textContent = 'Подключаюсь…';
+            }
+
+            const codeEl = $('#session-code');
+            const nameEl = $('#participant-name');
+            const roleEl = $('#participant-real-role');
+            const code = (codeEl?.value || '').trim().toUpperCase();
+            const name = (nameEl?.value || '').trim();
+            const realRole = (roleEl?.value || '');
+
+            if (!code || code.length !== 6) {
+                showNotification('Введите корректный код сессии (6 символов)', 'error');
+                return;
+            }
+            if (!name) {
+                showNotification('Введите ваше имя', 'error');
+                return;
+            }
+            if (!realRole) {
+                showNotification('Выберите вашу реальную роль', 'error');
+                return;
+            }
+
+            showNotification('Подключаюсь к сессии…', 'info');
+            joinSession(code, name, realRole)
+                .catch(() => {}) // joinSession сам показывает сообщения об ошибках
+                .finally(() => {});
+        } catch (e) {
+            console.error('❌ Ошибка при попытке входа участника:', e);
+            showNotification('Не удалось выполнить вход. Откройте консоль (F12) для деталей.', 'error', 12000);
+        } finally {
+            if (joinBtn) {
+                joinBtn.dataset.busy = '0';
+                joinBtn.disabled = false;
+                joinBtn.textContent = prevText || 'Войти как участник';
+            }
         }
-        const code = $('#session-code').value.trim().toUpperCase();
-        const name = $('#participant-name').value.trim();
-        const realRole = $('#participant-real-role').value;
-        
-        if (!code || code.length !== 6) {
-            showNotification('Введите корректный код сессии (6 символов)', 'error');
-            if (joinBtn) { joinBtn.dataset.busy = '0'; joinBtn.disabled = false; }
-            return;
-        }
-        
-        if (!name) {
-            showNotification('Введите ваше имя', 'error');
-            if (joinBtn) { joinBtn.dataset.busy = '0'; joinBtn.disabled = false; }
-            return;
-        }
-        
-        if (!realRole) {
-            showNotification('Выберите вашу реальную роль', 'error');
-            if (joinBtn) { joinBtn.dataset.busy = '0'; joinBtn.disabled = false; }
-            return;
-        }
-        
-        showNotification('Подключаюсь к сессии…', 'info');
-        joinSession(code, name, realRole)
-            .finally(() => {
-                if (joinBtn) { joinBtn.dataset.busy = '0'; joinBtn.disabled = false; }
-            });
     });
     
     // Создать сессию
-    $('#create-btn').addEventListener('click', () => {
+    onId('create-btn', 'click', () => {
         const createBtn = $('#create-btn');
-        if (createBtn?.dataset?.busy === '1') return;
-        if (createBtn) {
-            createBtn.dataset.busy = '1';
-            createBtn.disabled = true;
+        const prevText = createBtn?.textContent || '';
+        try {
+            if (createBtn?.dataset?.busy === '1') return;
+            if (createBtn) {
+                createBtn.dataset.busy = '1';
+                createBtn.disabled = true;
+                createBtn.textContent = 'Создаю…';
+            }
+
+            const sessionName = ($('#session-name')?.value || '').trim() || 'Новый проект';
+            const customCode = ($('#session-code-input')?.value || '').trim().toUpperCase();
+            const moderatorName = ($('#moderator-name')?.value || '').trim() || 'Модератор';
+
+            // Получаем настройки проекта из select
+            const projectScale = $('#project-scale')?.value || 'medium';
+            const budgetLevel = $('#budget-level')?.value || 'medium';
+
+            // Валидация кода, если введён
+            if (customCode && !/^[A-Z0-9]{1,6}$/.test(customCode)) {
+                showNotification('Код сессии: только латиница и цифры (до 6 символов)', 'error');
+                return;
+            }
+
+            showNotification('Создаю сессию…', 'info');
+            Promise.resolve(createSession(sessionName, moderatorName, customCode, projectScale, budgetLevel))
+                .catch(() => {})
+                .finally(() => {});
+        } catch (e) {
+            console.error('❌ Ошибка при создании сессии:', e);
+            showNotification('Не удалось создать сессию. Откройте консоль (F12) для деталей.', 'error', 12000);
+        } finally {
+            if (createBtn) {
+                createBtn.dataset.busy = '0';
+                createBtn.disabled = false;
+                createBtn.textContent = prevText || '🚀 Создать сессию';
+            }
         }
-        const sessionName = $('#session-name').value.trim() || 'Новый проект';
-        const customCode = $('#session-code-input').value.trim().toUpperCase();
-        const moderatorName = $('#moderator-name').value.trim() || 'Модератор';
-        
-        // Получаем настройки проекта из select
-        const projectScale = $('#project-scale')?.value || 'medium';
-        const budgetLevel = $('#budget-level')?.value || 'medium';
-        
-        // Валидация кода, если введён
-        if (customCode && !/^[A-Z0-9]{1,6}$/.test(customCode)) {
-            showNotification('Код сессии: только латиница и цифры (до 6 символов)', 'error');
-            if (createBtn) { createBtn.dataset.busy = '0'; createBtn.disabled = false; }
-            return;
-        }
-        
-        showNotification('Создаю сессию…', 'info');
-        Promise.resolve(createSession(sessionName, moderatorName, customCode, projectScale, budgetLevel))
-            .finally(() => {
-                if (createBtn) { createBtn.dataset.busy = '0'; createBtn.disabled = false; }
-            });
     });
     
     // Демо-режим
