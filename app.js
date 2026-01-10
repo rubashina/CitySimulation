@@ -823,15 +823,6 @@ function resetDecisionToBaseline(decision, paramId = null) {
     return true;
 }
 
-function updateChangedCountNotices(changedCount, moveLimit) {
-    try {
-        const nodes = document.querySelectorAll('.param-notice-changes');
-        nodes.forEach(n => {
-            n.textContent = `Изменено параметров: ${changedCount}/${moveLimit}.`;
-        });
-    } catch (_) {}
-}
-
 function getDecisionForParticipant(participantId) {
     return ensureParticipantDecision(participantId);
 }
@@ -2229,6 +2220,16 @@ function renderParameters() {
         ? countChangedParams(decision)
         : 0;
 
+    // Глобальный счётчик изменений (в шапке параметров)
+    const changesCounter = $('#changes-counter');
+    if (changesCounter) {
+        changesCounter.textContent = `${changedCount}/${moveLimit}`;
+        changesCounter.style.display = isInputPhase ? 'inline-flex' : 'none';
+        changesCounter.title = isInputPhase
+            ? `Изменено параметров относительно начала раунда: ${changedCount}/${moveLimit}`
+            : 'Счётчик доступен в раундах ввода (фазы 1 и 4)';
+    }
+
     // Кнопка "сброс к началу раунда"
     const resetBtn = $('#reset-round-btn');
     if (resetBtn) {
@@ -2345,8 +2346,8 @@ function renderParameters() {
                         : (isLocked
                             ? '<div class="param-notice">Параметр заблокирован событием/ограничением</div>'
                             : (blockedByMoveLimit
-                                ? `<div class="param-notice">Лимит изменений: ${moveLimit}. Верните один из изменённых параметров к началу раунда, чтобы изменить другой.</div>`
-                                : `<div class="param-notice">Изменено параметров: ${changedCount}/${moveLimit}. Можно откатить параметр ↺ к началу раунда.</div>`)))}
+                                ? `<div class="param-notice">Лимит изменений исчерпан. Верните один из изменённых параметров к началу раунда (↺), чтобы изменить другой.</div>`
+                                : `<div class="param-notice">Можно откатить параметр ↺ к началу раунда.</div>`)))}
             `;
             
             body.appendChild(card);

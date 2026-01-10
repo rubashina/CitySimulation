@@ -1031,6 +1031,25 @@ h4 { font-size: 1rem; }
     margin: 0;
 }
 
+.parameters-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.changes-counter {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    font-weight: 600;
+    padding: 0.35rem 0.6rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(15, 23, 42, 0.35);
+    color: var(--text-primary);
+    min-width: 56px;
+    text-align: center;
+}
+
 /* History Panel */
 .history-panel {
     position: fixed;
