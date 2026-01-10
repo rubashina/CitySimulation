@@ -723,12 +723,25 @@ function normalizeDecision(decisionLike) {
     const parameters = rawParams
         ? rawParams.map(p => ({ id: p.id, value: Number(p.value) }))
         : createDefaultParametersArray();
+
+    // baseline на начало раунда (может быть сохранён в Firebase/local)
+    const rawBaseline = Array.isArray(decisionLike.baselineParameters) ? decisionLike.baselineParameters : null;
+    const baselineParameters = rawBaseline
+        ? rawBaseline.map(p => ({ id: p.id, value: Number(p.value) }))
+        : null;
+    const baselinePhase = (decisionLike.baselinePhase === null || decisionLike.baselinePhase === undefined)
+        ? null
+        : Number(decisionLike.baselinePhase);
+
     return {
         teamId,
         parameters,
         confirmed: !!decisionLike.confirmed,
         confirmedPhase: typeof decisionLike.confirmedPhase === 'number' ? decisionLike.confirmedPhase : null,
-        updatedAt: decisionLike.updatedAt || null
+        updatedAt: decisionLike.updatedAt || null,
+        baselinePhase: (baselinePhase !== null && !Number.isNaN(baselinePhase)) ? baselinePhase : null,
+        baselineParameters: (baselineParameters && baselineParameters.length > 0) ? baselineParameters : null,
+        baselineAt: decisionLike.baselineAt || null
     };
 }
 
