@@ -3,21 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
     <title>Городской Симулятор — Партиципаторное проектирование</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=20260110-8">
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <noscript>
-        <div style="max-width:720px;margin:24px auto;padding:14px 16px;border:1px solid #ef4444;border-radius:12px;background:#1f2937;color:#f3f4f6;font-family:system-ui">
-            JavaScript отключён — симулятор не сможет работать. Включите JavaScript в настройках браузера.
-        </div>
-    </noscript>
     <div id="app">
 
         <!-- Экран входа -->
@@ -99,7 +91,6 @@
                 <div class="demo-link">
                     <button class="btn btn-ghost" id="demo-btn">Демо-режим</button>
                 </div>
-                <div class="build-badge" id="build-badge" aria-hidden="true">Build: 20260110-8 · JS: ожидается…</div>
             </div>
         </div>
         
@@ -144,14 +135,6 @@
                 </div>
                 <div class="header-right">
                     <span class="user-name" id="p-user-name"></span>
-                    <button class="btn btn-icon" id="p-team-toggle" title="Команда">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/>
-                            <circle cx="9" cy="7" r="4"/>
-                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-                        </svg>
-                    </button>
                     <button class="btn btn-icon" id="p-history-toggle" title="История">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"/>
@@ -170,10 +153,6 @@
                     </div>
                     <div class="role-name" id="role-name">Архитектор</div>
                     <div class="role-desc" id="role-desc">Вы отстаиваете интересы архитектурного сообщества</div>
-                    <div class="team-members" id="team-members">
-                        <div class="team-members-title" id="team-members-title">Сокомандники</div>
-                        <div class="team-members-list" id="team-members-list"></div>
-                    </div>
                 </div>
                 
                 <!-- Сообщение модератора / Событие -->
@@ -289,15 +268,7 @@
                 
                 <!-- Параметры -->
                 <div class="parameters-section" id="parameters-section">
-                    <div class="parameters-header">
-                        <h3>Параметры проекта</h3>
-                        <div class="parameters-actions">
-                            <div class="changes-counter" id="changes-counter" aria-live="polite">0/6</div>
-                        <button class="btn btn-sm btn-ghost" id="reset-round-btn" type="button" title="Сбросить ваши параметры к началу текущего раунда">
-                            ↺ Сбросить к началу раунда
-                        </button>
-                        </div>
-                    </div>
+                    <h3>Параметры проекта</h3>
                     <div class="parameters-grid" id="parameters-grid">
                         <!-- Генерируется JS -->
                     </div>
@@ -329,20 +300,6 @@
                 <div class="history-list" id="history-list">
                     <!-- Генерируется JS -->
                 </div>
-            </aside>
-
-            <!-- Боковая панель команды (для участника) -->
-            <aside class="team-panel" id="team-panel">
-                <div class="panel-header">
-                    <h3>Моя команда</h3>
-                    <button class="btn btn-icon" id="team-close">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"/>
-                            <line x1="6" y1="6" x2="18" y2="18"/>
-                        </svg>
-                    </button>
-                </div>
-                <div class="team-panel-list" id="team-panel-list"></div>
             </aside>
         </div>
         
@@ -571,6 +528,7 @@
                             <button class="btn btn-ghost btn-sm" id="reset-all-btn">Сбросить параметры</button>
                             <button class="btn btn-ghost btn-sm" id="unlock-all-btn">Разблокировать всё</button>
                             <button class="btn btn-ghost btn-sm" id="force-confirm-btn">Принять за всех</button>
+                            <button class="btn btn-ghost btn-sm" id="download-protocols-btn">Скачать протоколы</button>
                         </div>
                     </div>
                 </aside>
@@ -621,10 +579,6 @@
                 </div>
                 <div class="endgame-sparkline" id="endgame-sparkline"></div>
                 <div class="endgame-hint">Динамика консенсуса по фазам</div>
-                <div class="endgame-actions">
-                    <button class="btn btn-primary" id="endgame-export-pdf">Скачать протокол (PDF)</button>
-                    <button class="btn btn-ghost" id="endgame-export-html">Скачать протокол (HTML)</button>
-                </div>
                 <button class="btn btn-ghost" id="endgame-close">Закрыть</button>
             </div>
         </div>
@@ -636,150 +590,12 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
     
-    <script>
-        // Минимальная самодиагностика/фолбэк (работает даже если app.js не загрузился)
-        window.__CITYSIM_BOOT = false;
-        window.__CITYSIM_LOADED = false;
-        window.__CITYSIM_LAST_ERROR = null;
-        window.__CITYSIM_SCRIPT_URL = null;
-        window.__CITYSIM_SCRIPT_ERR = null;
-        (function () {
-            function $(sel) { return document.querySelector(sel); }
-            function $all(sel) { return document.querySelectorAll(sel); }
-            function setBadge(text, isError) {
-                var badge = document.getElementById('build-badge');
-                if (!badge) return;
-                badge.textContent = text;
-                if (isError) badge.style.color = '#fca5a5';
-            }
-            function switchTab(tab) {
-                $all('.login-tabs .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-                const joinForm = $('#join-form');
-                const createForm = $('#create-form');
-                if (joinForm) joinForm.classList.toggle('hidden', tab !== 'join');
-                if (createForm) createForm.classList.toggle('hidden', tab !== 'create');
-            }
-            // Ловим JS-ошибки (включая SyntaxError при парсинге app.js)
-            window.addEventListener('error', function (ev) {
-                try {
-                    var msg = (ev && ev.message) ? String(ev.message) : 'Unknown error';
-                    var src = (ev && ev.filename) ? String(ev.filename) : '';
-                    var line = (ev && ev.lineno) ? String(ev.lineno) : '';
-                    window.__CITYSIM_LAST_ERROR = { msg: msg, src: src, line: line };
-                    setBadge('Build: 20260110-8 · JS ERROR: ' + msg + (line ? (' @' + line) : '') + (src ? (' · ' + src) : ''), true);
-                } catch (_) {}
-            }, true);
-            window.addEventListener('unhandledrejection', function (ev) {
-                try {
-                    var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : 'Unhandled rejection';
-                    window.__CITYSIM_LAST_ERROR = { msg: String(reason), src: 'promise', line: '' };
-                    setBadge('Build: 20260110-8 · JS ERROR: ' + String(reason), true);
-                } catch (_) {}
-            });
-            document.addEventListener('click', function (e) {
-                const btn = e.target && e.target.closest && e.target.closest('.login-tabs .tab-btn');
-                if (btn && btn.dataset && btn.dataset.tab) {
-                    switchTab(btn.dataset.tab);
-                }
-            }, true);
-            window.addEventListener('load', function () {
-                setTimeout(function () {
-                    if (window.__CITYSIM_BOOT) {
-                        setBadge('Build: 20260110-8 · JS: OK', false);
-                        return;
-                    }
-                    if (window.__CITYSIM_LOADED) {
-                        var err = window.__CITYSIM_LAST_ERROR && window.__CITYSIM_LAST_ERROR.msg ? window.__CITYSIM_LAST_ERROR.msg : 'инициализация не завершилась';
-                        setBadge('Build: 20260110-8 · JS: app.js загрузился, но не инициализировался (' + err + ')', true);
-                        return;
-                    }
-                    if (window.__CITYSIM_SCRIPT_ERR) {
-                        setBadge('Build: 20260110-8 · JS: app.js НЕ загрузился (' + window.__CITYSIM_SCRIPT_ERR + ')', true);
-                        return;
-                    }
-                    setBadge('Build: 20260110-8 · JS: app.js НЕ загрузился/не выполнился (кэш/404/блокировка)', true);
-                }, 1200);
-            });
-
-            // Умный загрузчик app.js: пробуем несколько путей для GitHub Pages
-            (function loadAppJs() {
-                var rev = '20260110-8';
-                function uniq(arr) {
-                    var seen = {};
-                    var out = [];
-                    for (var i = 0; i < arr.length; i++) {
-                        var x = arr[i];
-                        if (!x || seen[x]) continue;
-                        seen[x] = true;
-                        out.push(x);
-                    }
-                    return out;
-                }
-                function firstSeg() {
-                    try {
-                        var seg = (location.pathname || '').split('/').filter(Boolean)[0];
-                        return seg || null;
-                    } catch (_) { return null; }
-                }
-                var seg = firstSeg();
-                var guessProject = seg ? ('/' + seg + '/app.js?v=' + rev) : null;
-                var candidates = uniq([
-                    'app.js?v=' + rev,
-                    './app.js?v=' + rev,
-                    guessProject,
-                    '/CitySimulation/app.js?v=' + rev,
-                    '/app.js?v=' + rev
-                ]);
-
-                var idx = 0;
-                var attemptTimer = null;
-                function tryNext() {
-                    if (idx >= candidates.length) {
-                        window.__CITYSIM_SCRIPT_ERR = 'не найдено ни по одному пути';
-                        setBadge('Build: 20260110-8 · JS: app.js НЕ найден. Путь: ' + (location && location.pathname ? location.pathname : ''), true);
-                        return;
-                    }
-                    var url = candidates[idx++];
-                    window.__CITYSIM_SCRIPT_URL = url;
-                    setBadge('Build: 20260110-8 · JS: загружаю ' + url + ' (path=' + (location && location.pathname ? location.pathname : '') + ')', false);
-                    var s = document.createElement('script');
-                    s.src = url;
-                    s.async = false;
-                    var done = false;
-                    function finish(kind) {
-                        if (done) return;
-                        done = true;
-                        if (attemptTimer) { clearTimeout(attemptTimer); attemptTimer = null; }
-                        if (kind === 'timeout') {
-                            window.__CITYSIM_SCRIPT_ERR = 'таймаут загрузки: ' + url;
-                        setBadge('Build: 20260110-8 · JS: таймаут ' + url, true);
-                            tryNext();
-                        }
-                    }
-                    attemptTimer = setTimeout(function () { finish('timeout'); }, 3500);
-                    s.onload = function () {
-                        done = true;
-                        if (attemptTimer) { clearTimeout(attemptTimer); attemptTimer = null; }
-                        // app.js сам выставит __CITYSIM_LOADED/__CITYSIM_BOOT и обновит бейдж
-                    };
-                    s.onerror = function () {
-                        window.__CITYSIM_SCRIPT_ERR = 'ошибка загрузки: ' + url;
-                        setBadge('Build: 20260110-8 · JS: ошибка загрузки ' + url, true);
-                        if (attemptTimer) { clearTimeout(attemptTimer); attemptTimer = null; }
-                        tryNext();
-                    };
-                    document.body.appendChild(s);
-                }
-                tryNext();
-            })();
-        })();
-    </script>
+    <script src="app.js"></script>
 </body>
 </html>
 

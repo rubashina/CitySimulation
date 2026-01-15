@@ -397,16 +397,6 @@ h4 { font-size: 1rem; }
     text-align: center;
 }
 
-.build-badge {
-    margin-top: 1rem;
-    text-align: center;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    opacity: 0.85;
-    user-select: none;
-}
-
 /* =====================================================
    HEADER
    ===================================================== */
@@ -674,99 +664,6 @@ h4 { font-size: 1rem; }
     margin-bottom: 1rem;
 }
 
-.param-header-right {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.param-reset-btn {
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    background: rgba(15, 23, 42, 0.35);
-    color: var(--text-secondary);
-    border-radius: 8px;
-    padding: 0.15rem 0.45rem;
-    cursor: pointer;
-    font-size: 0.9rem;
-    line-height: 1.2;
-    transition: all var(--transition-fast);
-}
-
-.param-reset-btn:hover:not(:disabled) {
-    border-color: rgba(59, 130, 246, 0.35);
-    color: var(--text-primary);
-    transform: translateY(-1px);
-}
-
-.param-reset-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.param-category {
-    margin-bottom: 0.75rem;
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-}
-
-/* Убираем стандартный маркер details */
-.param-category > summary {
-    list-style: none;
-}
-.param-category > summary::-webkit-details-marker {
-    display: none;
-}
-
-.param-category-header {
-    display: grid;
-    grid-template-columns: auto 1fr auto auto;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.9rem 1rem;
-    border-radius: var(--radius-lg);
-    background: rgba(15, 23, 42, 0.55);
-    border: 1px solid rgba(148, 163, 184, 0.14);
-    cursor: pointer;
-    user-select: none;
-    transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
-}
-
-.param-category-header:hover {
-    transform: translateY(-1px);
-    border-color: rgba(99, 102, 241, 0.25);
-    background: rgba(15, 23, 42, 0.65);
-}
-
-.category-icon {
-    font-size: 1.1rem;
-}
-
-.category-name {
-    font-weight: 600;
-    color: var(--text-primary);
-}
-
-.category-weight {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    opacity: 0.9;
-}
-
-.category-chevron {
-    font-size: 0.9rem;
-    color: var(--text-muted);
-    transform: rotate(-90deg);
-    transition: transform var(--transition-fast);
-}
-
-.param-category[open] .category-chevron {
-    transform: rotate(0deg);
-}
-
-.param-category-body {
-    padding: 0.75rem 0;
-}
-
 .param-name {
     font-weight: 600;
     font-size: 1rem;
@@ -783,13 +680,6 @@ h4 { font-size: 1rem; }
     font-size: 0.8125rem;
     color: var(--text-muted);
     margin-bottom: 1rem;
-}
-
-.param-subvalue {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin: -0.5rem 0 0.75rem 0;
-    opacity: 0.9;
 }
 
 /* Slider */
@@ -862,8 +752,37 @@ h4 { font-size: 1rem; }
 }
 
 /* =====================================================
-   КАТЕГОРИИ ПАРАМЕТРОВ (АККОРДЕОН)
+   КАТЕГОРИИ ПАРАМЕТРОВ
    ===================================================== */
+.param-category-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 0 0.5rem;
+    margin-top: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    grid-column: 1 / -1;
+}
+
+.param-category-header:first-child {
+    margin-top: 0;
+}
+
+.category-icon {
+    font-size: 1.25rem;
+}
+
+.category-name {
+    font-weight: 600;
+    font-size: 0.9375rem;
+}
+
+.category-weight {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 600;
+}
 
 .param-card {
     border-left: 3px solid var(--border-color);
@@ -1018,38 +937,6 @@ h4 { font-size: 1rem; }
     color: var(--text-secondary);
 }
 
-/* Parameters header (title + reset button) */
-.parameters-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1rem;
-}
-
-.parameters-header h3 {
-    margin: 0;
-}
-
-.parameters-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.changes-counter {
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    font-weight: 600;
-    padding: 0.35rem 0.6rem;
-    border-radius: var(--radius-sm);
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    background: rgba(15, 23, 42, 0.35);
-    color: var(--text-primary);
-    min-width: 56px;
-    text-align: center;
-}
-
 /* History Panel */
 .history-panel {
     position: fixed;
@@ -1066,46 +953,6 @@ h4 { font-size: 1rem; }
 
 .history-panel.open {
     right: 0;
-}
-
-/* Team Panel (participant) */
-.team-panel {
-    position: fixed;
-    top: 0;
-    right: -400px;
-    width: 400px;
-    height: 100vh;
-    background: var(--bg-secondary);
-    border-left: 1px solid var(--border-color);
-    z-index: 300;
-    transition: right var(--transition-normal);
-    overflow-y: auto;
-}
-
-.team-panel.open {
-    right: 0;
-}
-
-.team-panel-list {
-    padding: 1rem;
-}
-
-.team-panel-item {
-    padding: 0.9rem 1rem;
-    margin-bottom: 0.75rem;
-    background: var(--bg-card);
-    border-radius: var(--radius-md);
-    border-left: 3px solid var(--accent);
-}
-
-.team-panel-item .name {
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-}
-
-.team-panel-item .meta {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
 }
 
 .panel-header {
@@ -1886,7 +1733,6 @@ h4 { font-size: 1rem; }
 .role-team.team-b { color: #f59e0b; background: rgba(245, 158, 11, 0.2); }
 .role-team.team-c { color: #ec4899; background: rgba(236, 72, 153, 0.2); }
 .role-team.team-d { color: #8b5cf6; background: rgba(139, 92, 246, 0.2); }
-.role-team.team-e { color: #3b82f6; background: rgba(59, 130, 246, 0.2); }
 
 .role-name {
     font-size: 1.5rem;
@@ -1901,50 +1747,6 @@ h4 { font-size: 1rem; }
 .role-desc {
     font-size: 0.875rem;
     color: var(--text-secondary);
-}
-
-.role-card .team-members {
-    margin-top: 1rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(59, 130, 246, 0.18);
-    text-align: left;
-}
-
-.role-card .team-members-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 0.5rem;
-}
-
-.role-card .team-members-list {
-    display: grid;
-    gap: 0.35rem;
-}
-
-.role-card .team-member-row {
-    padding: 0.45rem 0.6rem;
-    border-radius: var(--radius-sm);
-    background: rgba(15, 23, 42, 0.35);
-    border: 1px solid rgba(148, 163, 184, 0.14);
-    font-size: 0.875rem;
-    color: var(--text-primary);
-}
-
-.role-card .team-member-empty {
-    font-size: 0.875rem;
-    color: var(--text-muted);
-    padding: 0.25rem 0;
-}
-
-.endgame-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-top: 0.75rem;
 }
 
 /* Input Hint */
@@ -1978,7 +1780,6 @@ h4 { font-size: 1rem; }
 .team-card.team-b { border-left-color: #f59e0b; }
 .team-card.team-c { border-left-color: #ec4899; }
 .team-card.team-d { border-left-color: #8b5cf6; }
-.team-card.team-e { border-left-color: #3b82f6; }
 
 .team-name {
     font-size: 0.75rem;
