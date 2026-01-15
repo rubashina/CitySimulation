@@ -989,6 +989,50 @@ function downloadCurrentProtocol() {
     downloadFile(`protocol_${protocol.session.code}_${stamp}.json`, JSON.stringify(protocol, null, 2));
 }
 
+function downloadProtocolBySessionCode(sessionCode) {
+    const code = String(sessionCode || '').trim().toUpperCase();
+    if (!code) return Promise.reject(new Error('Empty session code'));
+    
+    if (!firebaseEnabled) {
+        showNotification('Ретро-протокол по коду доступен только в онлайн-режиме (Firebase).', 'error');
+        return Promise.reject(new Error('Firebase disabled'));
+    }
+    
+    return firebaseDB.ref(`sessions/${code}`).once('value').then((snap) => {
+        const data = snap.val();
+        if (!data) {
+            showNotification('Сессия не найдена по коду', 'error');
+            throw new Error('Session not found');
+        }
+        
+        // Собираем ретро-протокол из того, что реально хранится в sessions/<code>
+        const protocol = {
+            version: 1,
+            type: 'retro',
+            fetchedAt: new Date().toISOString(),
+            session: {
+                code,
+                name: data.session?.name || '',
+                createdAt: data.session?.createdAt || null,
+                completedAt: null,
+                phase: typeof data.phase === 'number' ? data.phase : Number(data.phase || 0),
+                projectScale: data.session?.projectScale || 'medium',
+                budgetLevel: data.session?.budgetLevel || 'medium',
+                budgetTotal: data.session?.budgetTotal || null
+            },
+            participants: data.participants ? Object.values(data.participants) : [],
+            teamsData: data.teams || {},
+            // В прошлых версиях лог/таймлайн могли не сохраняться в Firebase — оставляем пустыми
+            log: [],
+            timelineData: []
+        };
+        
+        const stamp = new Date().toISOString().replaceAll(':', '-');
+        downloadFile(`protocol_retro_${code}_${stamp}.json`, JSON.stringify(protocol, null, 2));
+        return true;
+    });
+}
+
 function downloadAllProtocols() {
     // Firebase
     if (firebaseEnabled) {
@@ -2954,15 +2998,36 @@ function initModeratorActions() {
 
     // Скачать протоколы
     $('#download-protocols-btn')?.addEventListener('click', () => {
-        const all = window.confirm('Скачать протоколы ВСЕХ прошлых игр?\n\nOK = все протоколы\nОтмена = только текущая игра');
-        if (all) {
+        const choice = window.prompt(
+            'Что скачать?\n\n' +
+            '1) ALL — все сохранённые протоколы\n' +
+            '2) CURRENT — только текущую игру\n' +
+            '3) CODE:<код> — протокол по коду сессии (например CODE:898900)\n\n' +
+            'Введите ALL / CURRENT / CODE:... ',
+            'CURRENT'
+        );
+        
+        const val = String(choice || '').trim().toUpperCase();
+        if (!val) return;
+        
+        if (val === 'ALL') {
             downloadAllProtocols()
                 .then(() => showNotification('Протоколы скачаны', 'success'))
                 .catch(() => showNotification('Не удалось скачать протоколы', 'error'));
-        } else {
-            downloadCurrentProtocol();
-            showNotification('Протокол текущей игры скачан', 'success');
+            return;
         }
+        
+        if (val.startsWith('CODE:')) {
+            const code = val.slice('CODE:'.length).trim();
+            downloadProtocolBySessionCode(code)
+                .then(() => showNotification(`Протокол по коду ${code} скачан`, 'success'))
+                .catch(() => showNotification('Не удалось скачать протокол по коду', 'error'));
+            return;
+        }
+        
+        // default: CURRENT
+        downloadCurrentProtocol();
+        showNotification('Протокол текущей игры скачан', 'success');
     });
 }
 
