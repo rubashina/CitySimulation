@@ -493,6 +493,25 @@ h4 { font-size: 1rem; }
     font-size: 0.75rem;
 }
 
+/* Таймер фазы (виден всем) */
+.phase-timer {
+    padding: 0.375rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--warning);
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+}
+
+.phase-timer.timer-expired {
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.12);
+}
+
 /* Phase Change Animation */
 .phase-indicator.phase-changing {
     animation: phaseChange 0.5s ease;
@@ -643,6 +662,21 @@ h4 { font-size: 1rem; }
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     transition: all var(--transition-normal);
+}
+
+.param-card.moved {
+    border-color: rgba(6, 214, 160, 0.35);
+    box-shadow: 0 0 0 1px rgba(6, 214, 160, 0.15), var(--shadow-md);
+    transform: translateY(-1px);
+}
+
+.param-card.moved .param-value {
+    color: var(--accent);
+    font-size: 1.35rem;
+}
+
+.param-card.moved .slider {
+    height: 10px;
 }
 
 .param-card:hover {

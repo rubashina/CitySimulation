@@ -125,6 +125,102 @@ function localBroadcast(message) {
     }
 }
 
+// =====================================================
+// ТАЙМЕРЫ ФАЗ
+// =====================================================
+
+function isDecisionTimerPhase(phase) {
+    const p = Number(phase);
+    return Array.isArray(CONFIG.decisionTimers?.phases) && CONFIG.decisionTimers.phases.includes(p);
+}
+
+function getTimerForPhase(phase) {
+    const p = Number(phase);
+    return state.session.timers?.[p] || null;
+}
+
+function getTimerRemainingSec(phase) {
+    const t = getTimerForPhase(phase);
+    if (!t) return null;
+    const startedAtMs = parseStartedAtMs(t.startedAt);
+    const durationSec = Number(t.durationSec ?? CONFIG.decisionTimers.durationSec);
+    if (!startedAtMs || !Number.isFinite(durationSec)) return null;
+    const elapsedSec = (Date.now() - startedAtMs) / 1000;
+    return Math.max(0, Math.ceil(durationSec - elapsedSec));
+}
+
+function ensureTimerTicking() {
+    if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+    if (!state.ui.timerNotified) state.ui.timerNotified = {};
+    if (state.ui.timerIntervalId) return;
+
+    state.ui.timerIntervalId = setInterval(() => {
+        updatePhaseTimerUI();
+        const p = Number(state.session.phase);
+        if (!isDecisionTimerPhase(p)) return;
+        const remaining = getTimerRemainingSec(p);
+        if (remaining === null) return;
+        if (remaining <= 0 && !state.ui.timerNotified[String(p)]) {
+            state.ui.timerNotified[String(p)] = true;
+            showNotification('⏰ Время истекло на принятие решений', 'warning');
+            // Важно: фазу переключает только модератор вручную
+        }
+    }, 1000);
+}
+
+function updatePhaseTimerUI() {
+    const p = Number(state.session.phase);
+    const isTimerPhase = isDecisionTimerPhase(p);
+    const ids = ['p-phase-timer', 'm-phase-timer'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (!isTimerPhase) {
+            el.textContent = '';
+            el.classList.add('hidden');
+            return;
+        }
+        el.classList.remove('hidden');
+        const remaining = getTimerRemainingSec(p);
+        if (remaining === null) {
+            el.textContent = '⏳ 10:00';
+            return;
+        }
+        el.textContent = `⏳ ${formatDuration(remaining)}`;
+        el.classList.toggle('timer-expired', remaining <= 0);
+    });
+}
+
+function startPhaseTimer(phase, durationSec = CONFIG.decisionTimers.durationSec) {
+    const p = Number(phase);
+    if (!Number.isFinite(p)) return;
+    const payload = { startedAt: new Date().toISOString(), durationSec: Number(durationSec) };
+
+    // Локальный режим
+    if (!firebaseEnabled) {
+        if (!state.session.code) return;
+        const existing = localReadSession(state.session.code) || {};
+        existing.timers = existing.timers || {};
+        existing.timers[p] = payload;
+        localWriteSession(state.session.code, existing);
+        localBroadcast({ type: 'timers_update', code: state.session.code, timers: existing.timers });
+        localBroadcast({ type: 'session_update', code: state.session.code, data: existing });
+        // Применим локально
+        state.session.timers = { ...(state.session.timers || {}), [p]: payload };
+        updatePhaseTimerUI();
+        ensureTimerTicking();
+        return;
+    }
+
+    if (!state.session.code) return;
+    try {
+        const ref = firebaseDB.ref(`sessions/${state.session.code}/timers/${p}`);
+        ref.set(payload).catch(e => console.error('❌ Ошибка записи таймера:', e));
+    } catch (e) {
+        console.error('❌ Ошибка записи таймера:', e);
+    }
+}
+
 function initLocalSync() {
     if (!LOCAL_SYNC.enabled) return;
     try {
@@ -208,6 +304,13 @@ function handleLocalMessage(msg) {
                 }
             }
             break;
+        case 'timers_update':
+            if (msg.timers) {
+                state.session.timers = msg.timers;
+                updatePhaseTimerUI();
+                ensureTimerTicking();
+            }
+            break;
         case 'broadcast':
             if (msg.payload?.message) {
                 showBroadcast(msg.payload.message, msg.payload);
@@ -243,8 +346,13 @@ function syncSessionFromLocal(data) {
     if (data.teams) {
         state.teamsData = { ...state.teamsData, ...data.teams };
     }
+    if (data.timers) {
+        state.session.timers = data.timers;
+    }
     syncCaptainFlagsFromTeams();
     updatePhaseUI();
+    updatePhaseTimerUI();
+    ensureTimerTicking();
 }
 
 function initFirebase() {
@@ -435,6 +543,14 @@ function subscribeToSession(sessionCode) {
             
             addToLog('phase', `Переход к фазе ${phase}: ${CONFIG.phases[phase]?.name}`);
         }
+    });
+
+    // Таймеры фаз
+    sessionRef.child('timers').on('value', (snapshot) => {
+        const timers = snapshot.val() || {};
+        state.session.timers = timers;
+        updatePhaseTimerUI();
+        ensureTimerTicking();
     });
 
     // Сообщения модератора
@@ -836,6 +952,12 @@ const CONFIG = {
         { id: 4, name: 'Раунд 2', desc: 'Переговоры и компромиссы' },
         { id: 5, name: 'Итоги', desc: 'Финальный анализ и выводы' }
     ],
+
+    // Таймеры (сек) для фаз принятия решений
+    decisionTimers: {
+        phases: [1, 4],      // Раунд 1 и Раунд 2
+        durationSec: 10 * 60 // 10 минут
+    },
     
     // Шаблоны событий
     eventTemplates: {
@@ -924,6 +1046,7 @@ const state = {
         isPaused: false,
         completedAt: null,
         protocolSaved: false,
+        timers: {}, // { [phase:number]: { startedAt: string|number, durationSec: number } }
         // Настройки проекта
         projectScale: 'medium',
         budgetLevel: 'medium',
@@ -1153,6 +1276,22 @@ function formatDateTime(date) {
 
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
+}
+
+function formatDuration(sec) {
+    const s = Math.max(0, Math.floor(Number(sec) || 0));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+}
+
+function parseStartedAtMs(startedAt) {
+    if (typeof startedAt === 'number' && Number.isFinite(startedAt)) return startedAt;
+    if (typeof startedAt === 'string') {
+        const ms = Date.parse(startedAt);
+        return Number.isFinite(ms) ? ms : null;
+    }
+    return null;
 }
 
 function wait(ms) {
@@ -2125,7 +2264,7 @@ function renderParameters() {
             const isDisabled = isLocked || !isInputPhase || blockedByMoveLimit;
             
             const card = document.createElement('div');
-            card.className = `param-card ${isLocked ? 'locked' : ''}`;
+            card.className = `param-card ${isLocked ? 'locked' : ''} ${isMoved ? 'moved' : ''}`;
             card.style.borderLeftColor = category.color;
             card.innerHTML = `
                 <div class="param-header">
@@ -2724,6 +2863,13 @@ function initPhaseControls() {
             
             // Синхронизируем фазу с Firebase для участников
             updatePhaseInFirebase(state.session.phase);
+
+            // Стартуем таймер на фазах принятия решений
+            if (isDecisionTimerPhase(state.session.phase)) {
+                startPhaseTimer(state.session.phase, CONFIG.decisionTimers.durationSec);
+                // сбрасываем локальное "уведомление об окончании" для этой фазы
+                if (state.ui?.timerNotified) state.ui.timerNotified[String(state.session.phase)] = false;
+            }
             
             // Лог
             const phaseName = CONFIG.phases[state.session.phase].name;
@@ -2811,6 +2957,10 @@ function updatePhaseUI() {
     
     // Применяем логику фаз
     applyPhaseLogic(phase);
+
+    // Таймеры фаз
+    updatePhaseTimerUI();
+    ensureTimerTicking();
 
     // Для участника всегда обновляем баннер события + статус кнопки
     // (это исправляет кейс, когда фазу обновил общий listener, а phase-listener не сработал из-за гонки)
