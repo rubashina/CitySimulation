@@ -298,7 +298,7 @@ h4 { font-size: 1rem; }
 
 .login-container {
     width: 100%;
-    max-width: 480px;
+    max-width: 640px;
     padding: 0 1rem;
     animation: fadeInUp 0.6s ease-out;
 }
@@ -348,6 +348,7 @@ h4 { font-size: 1rem; }
 .login-tabs {
     display: flex;
     gap: 0.5rem;
+    flex-wrap: wrap;
     margin-bottom: 1.5rem;
     padding: 0.25rem;
     background: var(--bg-secondary);
@@ -355,7 +356,7 @@ h4 { font-size: 1rem; }
 }
 
 .login-tabs .tab-btn {
-    min-width: 0;
+    min-width: 200px;
 }
 
 /* Режим демонстрации: скрываем управляющие элементы модератора */
@@ -370,7 +371,7 @@ body.display-mode #add-bot-btn {
 }
 
 .tab-btn {
-    flex: 1;
+    flex: 1 1 200px;
     padding: 0.75rem 1rem;
     font-family: var(--font-main);
     font-size: 0.875rem;
@@ -381,6 +382,9 @@ body.display-mode #add-bot-btn {
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--transition-fast);
+    white-space: normal;
+    line-height: 1.15;
+    text-align: center;
 }
 
 .tab-btn:hover {
