@@ -2030,6 +2030,13 @@ function ensureParticipantMeta(p) {
     if (typeof p.confirmed !== 'boolean') p.confirmed = false;
     if (typeof p.confirmedPhase !== 'number') p.confirmedPhase = null;
     if (!p.confirmations || typeof p.confirmations !== 'object') p.confirmations = {};
+    // Нормализуем team по текущему CONFIG (чтобы старые сессии не показывали "Команда A/B/...")
+    if (p.team && p.team.id) {
+        const canonical = CONFIG.teams.find(t => t.id === p.team.id);
+        if (canonical) {
+            p.team = canonical;
+        }
+    }
     return p;
 }
 
@@ -2039,6 +2046,9 @@ function syncCaptainFlagsFromTeams() {
     if (!Array.isArray(state.participants)) return;
     state.participants.forEach(p => {
         if (!p?.team?.id) return;
+        // Также нормализуем team-объект (имя/цвет) на случай старых данных
+        const canonicalTeam = CONFIG.teams.find(t => t.id === p.team.id);
+        if (canonicalTeam) p.team = canonicalTeam;
         const capId = state.teamsData?.[p.team.id]?.captainId;
         if (!capId) return;
         p.isCaptain = p.id === capId;
