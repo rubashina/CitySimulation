@@ -1180,8 +1180,74 @@ function stddev(values) {
     return Math.sqrt(variance);
 }
 
+function getDefaultValuesById() {
+    const defs = getAllParameters();
+    const map = new Map();
+    defs.forEach(p => map.set(p.id, p.default));
+    return map;
+}
+
+function getMovedParamIds(parameters) {
+    const defById = getDefaultValuesById();
+    const moved = new Set();
+    (parameters || []).forEach(p => {
+        const def = defById.get(p.id);
+        if (typeof def !== 'number') return;
+        if (Number(p.value) !== Number(def)) moved.add(p.id);
+    });
+    return moved;
+}
+
+function getMovedCount(parameters) {
+    return getMovedParamIds(parameters).size;
+}
+
 function getInitials(name) {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+}
+
+function initTooltips() {
+    // Кастомные подсказки вместо title (в некоторых браузерах/сборках title не показывается)
+    let tip = document.getElementById('app-tooltip');
+    if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'app-tooltip';
+        tip.className = 'app-tooltip hidden';
+        document.body.appendChild(tip);
+    }
+
+    let activeEl = null;
+    const show = (el, text) => {
+        if (!text) return;
+        activeEl = el;
+        tip.textContent = text;
+        tip.classList.remove('hidden');
+    };
+    const hide = () => {
+        activeEl = null;
+        tip.classList.add('hidden');
+    };
+    const move = (evt) => {
+        if (!activeEl || tip.classList.contains('hidden')) return;
+        const pad = 12;
+        const x = evt.clientX + pad;
+        const y = evt.clientY + pad;
+        tip.style.left = `${x}px`;
+        tip.style.top = `${y}px`;
+    };
+
+    document.addEventListener('mouseover', (e) => {
+        const el = e.target?.closest?.('[data-tooltip]');
+        if (!el) return;
+        const text = el.getAttribute('data-tooltip');
+        show(el, text);
+    });
+    document.addEventListener('mouseout', (e) => {
+        const el = e.target?.closest?.('[data-tooltip]');
+        if (!el) return;
+        if (activeEl === el) hide();
+    });
+    document.addEventListener('mousemove', move, { passive: true });
 }
 
 function $(selector) {
@@ -1998,8 +2064,11 @@ function renderParameters() {
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
     const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
-    const movesUsed = Array.isArray(state.userDraft.movesUsed) ? state.userDraft.movesUsed : (state.userDraft.movesUsed = []);
-    const movesRemaining = Math.max(0, moveLimit - movesUsed.length);
+    // Счётчик изменений = сколько параметров сейчас НЕ на дефолте (а не "сколько трогали")
+    const defById = getDefaultValuesById();
+    const movedIds = getMovedParamIds(draftParams);
+    const movedCount = movedIds.size;
+    const movesRemaining = Math.max(0, moveLimit - movedCount);
     
     // Рендерим параметры по категориям
     CONFIG.parameterCategories.forEach(category => {
@@ -2012,7 +2081,7 @@ function renderParameters() {
         headerBtn.setAttribute('aria-expanded', String(isOpen));
         headerBtn.setAttribute('aria-controls', `acc-body-${category.id}`);
         headerBtn.innerHTML = `
-            <span class="category-icon" title="${category.name}">${category.icon}</span>
+            <span class="category-icon" data-tooltip="${category.name}">${category.icon}</span>
             <span class="category-name">${category.name}</span>
             <span class="category-weight" style="color: ${category.weight < 0 ? '#ef4444' : category.color}">
                 ${category.weight > 0 ? '+' : ''}${(category.weight * 100).toFixed(0)}%
@@ -2047,11 +2116,12 @@ function renderParameters() {
             // Получаем значение из личного черновика
             const draftParam = draftParams.find(p => p.id === param.id);
             const value = (draftParam && typeof draftParam.value === 'number') ? draftParam.value : param.default;
+            const def = Number(defById.get(param.id) ?? param.default);
+            const isMoved = Number(value) !== def;
             
             // Ползунок неактивен если заблокирован/не фаза ввода/лимит изменений исчерпан
-            const alreadyUsedThisPhase = movesUsed.includes(param.id);
             const movesExhausted = movesRemaining <= 0;
-            const blockedByMoveLimit = movesExhausted && !alreadyUsedThisPhase;
+            const blockedByMoveLimit = movesExhausted && !isMoved;
             const isDisabled = isLocked || !isInputPhase || blockedByMoveLimit;
             
             const card = document.createElement('div');
@@ -2060,7 +2130,16 @@ function renderParameters() {
             card.innerHTML = `
                 <div class="param-header">
                     <span class="param-name">${param.name}</span>
-                    <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
+                    <span class="param-value-wrap">
+                        <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
+                        <button type="button"
+                                class="param-reset-btn"
+                                data-param="${param.id}"
+                                data-tooltip="Сбросить к дефолту (${def}${param.unit})"
+                                ${(!isInputPhase || isLocked || !isMoved) ? 'disabled' : ''}>
+                            ↺
+                        </button>
+                    </span>
                 </div>
                 <p class="param-desc">${param.desc}</p>
                 <div class="param-slider">
@@ -2077,55 +2156,67 @@ function renderParameters() {
                     ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
                     : (blockedByMoveLimit
                         ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
-                        : (movesUsed.length > 0
-                            ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
-                            : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))}
+                        : `<div class="param-notice">Изменено параметров: ${movedCount} / ${moveLimit} • осталось: ${movesRemaining}</div>`)}
             `;
             
             body.appendChild(card);
             
+            // Сброс к дефолту (освобождает слот лимита)
+            const resetBtn = card.querySelector('.param-reset-btn');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', () => {
+                    const vec = getUserDraftParameters();
+                    const entry = vec.find(p => p.id === param.id);
+                    if (!entry) return;
+                    entry.value = def;
+
+                    const slider = card.querySelector(`#slider-${param.id}`);
+                    if (slider) slider.value = String(def);
+                    const valEl = card.querySelector(`#value-${param.id}`);
+                    if (valEl) valEl.textContent = def + param.unit;
+
+                    updateIGSDisplay();
+                    updateConfirmButton();
+                    // нужно обновить блокировки/счётчик — теперь можно выбрать другой параметр
+                    renderParameters();
+                });
+            }
+
             // Обработчик слайдера (каждый участник меняет ЛИЧНЫЙ черновик)
             if (!isLocked && isInputPhase) {
                 const slider = card.querySelector(`#slider-${param.id}`);
                 slider.addEventListener('input', (e) => {
                     const newValue = parseInt(e.target.value);
-                    
-                    // Если фаза сменилась — сбрасываем счётчик изменений
-                    if (state.userDraft.movesPhase !== currentPhase) {
-                        state.userDraft.movesPhase = currentPhase;
-                        state.userDraft.movesUsed = [];
-                    }
-                    
-                    const used = Array.isArray(state.userDraft.movesUsed) ? state.userDraft.movesUsed : (state.userDraft.movesUsed = []);
-                    const alreadyUsed = used.includes(param.id);
+
                     const limit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
-                    if (!alreadyUsed && used.length >= limit) {
-                        // Отменяем изменение: возвращаем ползунок к текущему сохранённому значению
-                        const prevValue = (getUserDraftParameters().find(p => p.id === param.id)?.value ?? value);
+                    const vec = getUserDraftParameters();
+                    const entry = vec.find(p => p.id === param.id);
+                    if (!entry) return;
+                    const prevValue = Number(entry.value);
+
+                    const wasMoved = Number(prevValue) !== def;
+                    const willBeMoved = Number(newValue) !== def;
+                    const currentMovedCount = getMovedCount(vec);
+                    if (!wasMoved && willBeMoved && currentMovedCount >= limit) {
+                        // Отменяем изменение: возвращаем ползунок к текущему значению
                         e.target.value = String(prevValue);
                         card.querySelector(`#value-${param.id}`).textContent = prevValue + param.unit;
                         showNotification(`Лимит изменений на фазу исчерпан (${limit}).`, 'warning');
                         return;
                     }
-                    if (!alreadyUsed) {
-                        used.push(param.id);
-                    }
                     
                     card.querySelector(`#value-${param.id}`).textContent = newValue + param.unit;
                     
                     // Обновляем личный черновик
-                    const vec = getUserDraftParameters();
-                    const entry = vec.find(p => p.id === param.id);
-                    if (entry) entry.value = newValue;
+                    entry.value = newValue;
                     
                     // Обновляем ИГС в реальном времени
                     updateIGSDisplay();
                     updateConfirmButton();
                     
                     // Перерисуем, чтобы заблокировать "лишние" ползунки, когда лимит исчерпан
-                    if (!alreadyUsed && used.length >= (CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6)) {
-                        renderParameters();
-                    }
+                    const afterMovedCount = getMovedCount(vec);
+                    if (afterMovedCount !== currentMovedCount) renderParameters();
                 });
             }
         });
@@ -2169,13 +2260,13 @@ function renderIGSPanel() {
                 const val = igs.components[cat.id];
                 const contribution = cat.weight * val;
                 return `
-                    <div class="igs-component" title="${cat.name}: ${val.toFixed(1)} × ${cat.weight} = ${contribution.toFixed(1)}">
+                    <div class="igs-component" data-tooltip="${cat.name}: ${val.toFixed(1)} × ${cat.weight} = ${contribution.toFixed(1)}">
                         <span class="comp-icon">${cat.icon}</span>
                         <span class="comp-value" style="color: ${cat.color}">${val.toFixed(0)}</span>
                     </div>
                 `;
             }).join('')}
-            <div class="igs-component conflict" title="Конфликт интересов: ${igs.components.D.toFixed(1)}">
+            <div class="igs-component conflict" data-tooltip="Конфликт интересов: ${igs.components.D.toFixed(1)}">
                 <span class="comp-icon">⚡</span>
                 <span class="comp-value">${igs.components.D.toFixed(0)}</span>
             </div>
@@ -2189,7 +2280,8 @@ function renderCaptainMatrix() {
     const table = $('#captain-params-matrix');
     if (!section || !table) return;
 
-    const show = !state.user.isModerator;
+    // По требованию: матрицу параметров видит только модератор
+    const show = state.user.isModerator;
     section.classList.toggle('hidden', !show);
     if (!show) return;
 
@@ -2203,7 +2295,7 @@ function renderCaptainMatrix() {
 
     let html = '<thead><tr><th>Команда</th>';
     CONFIG.parameterCategories.forEach(cat => {
-        html += `<th style="color: ${cat.color}" title="${cat.name}">${cat.icon}</th>`;
+        html += `<th style="color: ${cat.color}"><span data-tooltip="${cat.name}">${cat.icon}</span></th>`;
     });
     html += '<th title="Индекс Городской Среды">ИГС</th><th>Подтв.</th></tr></thead><tbody>';
 
@@ -2215,7 +2307,7 @@ function renderCaptainMatrix() {
         CONFIG.parameterCategories.forEach(cat => {
             const catValue = igs.components[cat.id];
             const colorClass = catValue <= 33 ? 'low' : (catValue <= 66 ? 'mid' : 'high');
-            html += `<td class="${colorClass}" title="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
+            html += `<td class="${colorClass}" data-tooltip="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
         });
         html += `<td class="${getIGSClass(igs.total)}" style="font-weight: bold">${igs.total.toFixed(1)}</td>`;
         html += `<td>${stats.confirmed}/${stats.total}</td>`;
@@ -2309,8 +2401,8 @@ function updateIGSHero() {
     const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
-    const movesUsed = (state.userDraft.movesPhase === currentPhase && Array.isArray(state.userDraft.movesUsed)) ? state.userDraft.movesUsed.length : 0;
-    const budgetUsed = isInputPhase ? Math.round((movesUsed / Math.max(1, moveLimit)) * state.session.budgetTotal) : calculateBudgetUsed(params);
+    const movedCount = getMovedCount(params);
+    const budgetUsed = isInputPhase ? Math.round((movedCount / Math.max(1, moveLimit)) * state.session.budgetTotal) : calculateBudgetUsed(params);
     const budgetTotal = state.session.budgetTotal;
     
     heroValue.textContent = igs.total.toFixed(1);
@@ -3030,7 +3122,7 @@ function renderParamsMatrix() {
     // Заголовки: категории параметров
     let html = '<thead><tr><th>Команда / участник</th>';
     CONFIG.parameterCategories.forEach(cat => {
-        html += `<th style="color: ${cat.color}" title="${cat.name}">${cat.icon}</th>`;
+        html += `<th style="color: ${cat.color}"><span data-tooltip="${cat.name}">${cat.icon}</span></th>`;
     });
     html += '<th title="Индекс Городской Среды">ИГС</th><th>Статус</th></tr></thead><tbody>';
     
@@ -3061,12 +3153,12 @@ function renderParamsMatrix() {
             
             CONFIG.parameterCategories.forEach(cat => {
                 if (!igs) {
-                    html += `<td title="${cat.name}: нет подтверждённого решения">—</td>`;
+                    html += `<td data-tooltip="${cat.name}: нет подтверждённого решения">—</td>`;
                     return;
                 }
                 const catValue = igs.components[cat.id];
                 const colorClass = catValue <= 33 ? 'low' : (catValue <= 66 ? 'mid' : 'high');
-                html += `<td class="${colorClass}" title="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
+                html += `<td class="${colorClass}" data-tooltip="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
             });
             
             if (!igs) {
@@ -3113,7 +3205,7 @@ function renderParamsMatrix() {
         CONFIG.parameterCategories.forEach(cat => {
             const catValue = aggIGS.components[cat.id];
             const colorClass = catValue <= 33 ? 'low' : (catValue <= 66 ? 'mid' : 'high');
-            html += `<td class="${colorClass}" title="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
+            html += `<td class="${colorClass}" data-tooltip="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
         });
         
         html += `<td class="${getIGSClass(aggIGS.total)}" style="font-weight: bold">${aggIGS.total.toFixed(1)}</td>`;
@@ -3998,6 +4090,8 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Инициализируем Firebase
         initFirebase();
+        // Инициализируем подсказки
+        initTooltips();
         
         initLoginScreen();
         initEndgameOverlay();
