@@ -1082,7 +1082,7 @@ const CONFIG = {
         { id: 'b', roleId: 'activist', name: 'Команда Активисты', color: '#f59e0b' },
         { id: 'c', roleId: 'resident', name: 'Команда Жители', color: '#ec4899' },
         { id: 'd', roleId: 'admin', name: 'Команда Администрация', color: '#8b5cf6' },
-        { id: 'e', roleId: 'business', name: 'Команда Бизнес', color: '#22c55e' }
+        { id: 'e', roleId: 'business', name: 'Команда Предприниматели', color: '#22c55e' }
     ]
 };
 
