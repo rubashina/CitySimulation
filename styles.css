@@ -1060,6 +1060,12 @@ body.display-mode #add-bot-btn {
 .params-matrix td.igs-mid { background: rgba(245, 158, 11, 0.2); }
 .params-matrix td.igs-low { background: rgba(239, 68, 68, 0.2); }
 
+/* Подсветка конфликтных колонок в матрице (модератор) */
+.params-matrix th.conflict-col,
+.params-matrix td.conflict-col {
+    box-shadow: inset 0 0 0 2px rgba(239, 68, 68, 0.35);
+}
+
 /* Цветные ползунки */
 .slider {
     --slider-color: var(--accent);

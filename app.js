@@ -151,7 +151,8 @@ function getTimerRemainingSec(phase) {
 
 function ensureTimerTicking() {
     if (!state.ui || typeof state.ui !== 'object') state.ui = {};
-    if (!state.ui.timerNotified) state.ui.timerNotified = {};
+    if (!state.ui.timerNotified) state.ui.timerNotified = {}; // legacy (используем для 0 сек)
+    if (!state.ui.timerMilestonesNotified) state.ui.timerMilestonesNotified = {}; // { [phase]: { start:true, t180:true, t0:true } }
     if (state.ui.timerIntervalId) return;
 
     state.ui.timerIntervalId = setInterval(() => {
@@ -160,8 +161,26 @@ function ensureTimerTicking() {
         if (!isDecisionTimerPhase(p)) return;
         const remaining = getTimerRemainingSec(p);
         if (remaining === null) return;
-        if (remaining <= 0 && !state.ui.timerNotified[String(p)]) {
-            state.ui.timerNotified[String(p)] = true;
+        const key = String(p);
+        if (!state.ui.timerMilestonesNotified[key]) state.ui.timerMilestonesNotified[key] = {};
+        const flags = state.ui.timerMilestonesNotified[key];
+
+        // Старт (10 минут) — показываем сразу, как только таймер появился/обновился
+        if (!flags.start && remaining <= CONFIG.decisionTimers.durationSec && remaining > CONFIG.decisionTimers.durationSec - 2) {
+            flags.start = true;
+            showNotification('⏳ Осталось 10 минут, чтобы принять решения', 'info');
+        }
+
+        // 3 минуты осталось
+        if (!flags.t180 && remaining <= 180 && remaining > 178) {
+            flags.t180 = true;
+            showNotification('⏳ Осталось 3 минуты, чтобы принять решения', 'warning');
+        }
+
+        // Время вышло
+        if (remaining <= 0 && !flags.t0) {
+            flags.t0 = true;
+            state.ui.timerNotified[key] = true;
             showNotification('⏰ Время истекло на принятие решений', 'warning');
             // Важно: фазу переключает только модератор вручную
         }
@@ -195,6 +214,10 @@ function startPhaseTimer(phase, durationSec = CONFIG.decisionTimers.durationSec)
     const p = Number(phase);
     if (!Number.isFinite(p)) return;
     const payload = { startedAt: new Date().toISOString(), durationSec: Number(durationSec) };
+    // Сброс локальных уведомлений по вехам для этой фазы
+    if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+    if (!state.ui.timerMilestonesNotified) state.ui.timerMilestonesNotified = {};
+    state.ui.timerMilestonesNotified[String(p)] = {};
 
     // Локальный режим
     if (!firebaseEnabled) {
@@ -1338,9 +1361,13 @@ function buildProtocolReport() {
             })()
         },
         teams,
+        conflictTopParams: computeTopConflictingParameters(10),
+        conflictTopCategories: Array.from(getConflictingCategoryIds()),
         decisionsByParticipant,
         timeline: state.timelineData || [],
         events: state.eventsHistory || [],
+        locks: state.locks || {},
+        constraints: state.constraints || {},
         log: state.log || []
     };
 }
@@ -1907,6 +1934,17 @@ function computeTopConflictingParameters(limit = 5) {
     return scores.slice(0, limit);
 }
 
+function getConflictingCategoryIds() {
+    const top = computeTopConflictingParameters(5);
+    const byId = new Map(getAllParameters().map(p => [p.id, p.categoryId]));
+    const cats = new Set();
+    top.forEach(it => {
+        const c = byId.get(it.id);
+        if (c) cats.add(c);
+    });
+    return cats;
+}
+
 function renderTopConflictParams() {
     const container = $('#conflict-params-list');
     if (!container) return;
@@ -2096,6 +2134,57 @@ function ensureUserDraftInitialized() {
 function getUserDraftParameters() {
     ensureUserDraftInitialized();
     return state.userDraft.parameters;
+}
+
+function draftStorageKey(code, participantId, decisionPhase) {
+    return `${LOCAL_SYNC.storagePrefix}draft:${String(code || '').toUpperCase()}:${participantId}:${decisionPhase}`;
+}
+
+function saveUserDraftToStorage() {
+    try {
+        if (state.user.isModerator || state.user.isDisplay) return;
+        if (!state.session.code || !state.user.id) return;
+        const decisionPhase = getLatestDecisionPhase(state.session.phase);
+        const key = draftStorageKey(state.session.code, state.user.id, decisionPhase);
+        const payload = {
+            savedAt: new Date().toISOString(),
+            phase: decisionPhase,
+            parameters: getUserDraftParameters(),
+            movesPhase: state.userDraft.movesPhase,
+            movesUsed: state.userDraft.movesUsed
+        };
+        localStorage.setItem(key, JSON.stringify(payload));
+    } catch (e) {
+        console.warn('⚠️ Draft: не удалось сохранить черновик:', e);
+    }
+}
+
+let draftSaveTimer = null;
+function debounceSaveUserDraft(delay = 250) {
+    if (draftSaveTimer) clearTimeout(draftSaveTimer);
+    draftSaveTimer = setTimeout(saveUserDraftToStorage, delay);
+}
+
+function loadUserDraftFromStorage() {
+    try {
+        if (state.user.isModerator || state.user.isDisplay) return false;
+        if (!state.session.code || !state.user.id) return false;
+        const decisionPhase = getLatestDecisionPhase(state.session.phase);
+        const key = draftStorageKey(state.session.code, state.user.id, decisionPhase);
+        const raw = localStorage.getItem(key);
+        if (!raw) return false;
+        const data = JSON.parse(raw);
+        if (!data || Number(data.phase) !== Number(decisionPhase) || !Array.isArray(data.parameters)) return false;
+        state.userDraft.phase = decisionPhase;
+        state.userDraft.parameters = data.parameters;
+        state.userDraft.movesPhase = data.movesPhase ?? state.userDraft.movesPhase;
+        state.userDraft.movesUsed = Array.isArray(data.movesUsed) ? data.movesUsed : state.userDraft.movesUsed;
+        ensureUserDraftInitialized();
+        return true;
+    } catch (e) {
+        console.warn('⚠️ Draft: не удалось восстановить черновик:', e);
+        return false;
+    }
 }
 
 function areParamVectorsEqual(a, b) {
@@ -2441,7 +2530,6 @@ async function joinSession(code, name, realRole) {
 
 async function completeJoinSession(code, name, realRole) {
     state.session.code = code;
-    state.user.id = generateId();
     state.user.name = name;
     state.user.isModerator = false;
     state.user.realRole = realRole;
@@ -2464,6 +2552,33 @@ async function completeJoinSession(code, name, realRole) {
         }
     }
 
+    // Если участник уже существует (тот же код + имя + реальная роль) — возвращаем на место (без дублей)
+    const existingMe = state.participants.find(p =>
+        !p.isBot &&
+        String(p.name || '').trim().toLowerCase() === String(name || '').trim().toLowerCase() &&
+        String(p.realRole || '') === String(realRole || '')
+    );
+    if (existingMe) {
+        state.user.id = existingMe.id;
+        state.user.team = existingMe.team;
+        state.user.gameRole = existingMe.gameRole;
+        state.user.isCaptain = !!existingMe.isCaptain;
+
+        // Инициализируем параметры/черновик
+        state.parameters = getAllParameters();
+        ensureUserDraftInitialized();
+
+        subscribeToSession(code);
+        showScreen('participant-screen');
+        initParticipantScreen();
+        showNotification(`Вы вернулись в ${existingMe.team?.name || 'команду'} | Фаза: ${state.session.phase}`, 'success');
+        addToLog('join', `${name} вернулся(ась) в сессию → ${existingMe.team?.name || '-'}`);
+        console.log('✅ Re-join: участник восстановлен:', existingMe.id);
+        return;
+    }
+
+    // Новый участник
+    state.user.id = generateId();
     // Теперь добавляем себя
     completeJoinSessionStep2(code, name, realRole);
 }
@@ -2596,6 +2711,8 @@ async function createSession(sessionName, moderatorName, customCode = '', projec
 function initParticipantScreen() {
     updateParticipantHeader();
     renderRoleCard();
+    // Восстановим черновик (если пользователь обновил страницу/случайно вышел)
+    loadUserDraftFromStorage();
     renderParameters();
     renderCaptainMatrix();
     initHistoryPanel();
@@ -2783,6 +2900,7 @@ function renderParameters() {
 
                     updateIGSDisplay();
                     updateConfirmButton();
+                    debounceSaveUserDraft();
                     // нужно обновить блокировки/счётчик — теперь можно выбрать другой параметр
                     renderParameters();
                 });
@@ -2819,6 +2937,7 @@ function renderParameters() {
                     // Обновляем ИГС в реальном времени
                     updateIGSDisplay();
                     updateConfirmButton();
+                    debounceSaveUserDraft();
                     
                     // Перерисуем, чтобы заблокировать "лишние" ползунки, когда лимит исчерпан
                     const afterMovedCount = getMovedCount(vec);
@@ -3732,6 +3851,7 @@ function renderParamsMatrix() {
     if (!matrix) return;
     const activeTeams = getActiveTeams();
     const decisionPhase = getLatestDecisionPhase(state.session.phase);
+    const conflictCats = getConflictingCategoryIds();
     
     if (activeTeams.length === 0) {
         // Если участники есть, но команд нет — значит у участников не назначены команды (данные битые)
@@ -3746,7 +3866,10 @@ function renderParamsMatrix() {
     // Заголовки: категории параметров
     let html = '<thead><tr><th>Команда / участник</th>';
     CONFIG.parameterCategories.forEach(cat => {
-        html += `<th style="color: ${cat.color}"><span data-tooltip="${cat.name}">${cat.icon}</span></th>`;
+        const isConflict = conflictCats.has(cat.id);
+        const cls = isConflict ? 'conflict-col' : '';
+        const tip = isConflict ? `${cat.name} • ⚡ повышенная конфликтность` : cat.name;
+        html += `<th class="${cls}" style="color: ${cat.color}"><span data-tooltip="${tip}">${cat.icon}</span></th>`;
     });
     html += '<th title="Индекс Городской Среды">ИГС</th><th>Статус</th></tr></thead><tbody>';
     
@@ -3782,7 +3905,8 @@ function renderParamsMatrix() {
                 }
                 const catValue = igs.components[cat.id];
                 const colorClass = catValue <= 33 ? 'low' : (catValue <= 66 ? 'mid' : 'high');
-                html += `<td class="${colorClass}" data-tooltip="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
+                const cc = conflictCats.has(cat.id) ? ' conflict-col' : '';
+                html += `<td class="${colorClass}${cc}" data-tooltip="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
             });
             
             if (!igs) {
@@ -3829,7 +3953,8 @@ function renderParamsMatrix() {
         CONFIG.parameterCategories.forEach(cat => {
             const catValue = aggIGS.components[cat.id];
             const colorClass = catValue <= 33 ? 'low' : (catValue <= 66 ? 'mid' : 'high');
-            html += `<td class="${colorClass}" data-tooltip="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
+            const cc = conflictCats.has(cat.id) ? ' conflict-col' : '';
+            html += `<td class="${colorClass}${cc}" data-tooltip="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
         });
         
         html += `<td class="${getIGSClass(aggIGS.total)}" style="font-weight: bold">${aggIGS.total.toFixed(1)}</td>`;
