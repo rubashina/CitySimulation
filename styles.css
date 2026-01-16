@@ -1913,6 +1913,7 @@ body.display-mode #add-bot-btn {
 .role-team.team-b { color: #f59e0b; background: rgba(245, 158, 11, 0.2); }
 .role-team.team-c { color: #ec4899; background: rgba(236, 72, 153, 0.2); }
 .role-team.team-d { color: #8b5cf6; background: rgba(139, 92, 246, 0.2); }
+.role-team.team-e { color: #22c55e; background: rgba(34, 197, 94, 0.2); }
 
 .role-name {
     font-size: 1.5rem;
@@ -1960,6 +1961,7 @@ body.display-mode #add-bot-btn {
 .team-card.team-b { border-left-color: #f59e0b; }
 .team-card.team-c { border-left-color: #ec4899; }
 .team-card.team-d { border-left-color: #8b5cf6; }
+.team-card.team-e { border-left-color: #22c55e; }
 
 .team-name {
     font-size: 0.75rem;

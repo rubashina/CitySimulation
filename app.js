@@ -1078,10 +1078,11 @@ const CONFIG = {
     
     // Команды
     teams: [
-        { id: 'a', name: 'Команда A', color: '#06d6a0' },
-        { id: 'b', name: 'Команда B', color: '#f59e0b' },
-        { id: 'c', name: 'Команда C', color: '#ec4899' },
-        { id: 'd', name: 'Команда D', color: '#8b5cf6' }
+        { id: 'a', roleId: 'architect', name: 'Команда Архитекторы', color: '#06d6a0' },
+        { id: 'b', roleId: 'activist', name: 'Команда Активисты', color: '#f59e0b' },
+        { id: 'c', roleId: 'resident', name: 'Команда Жители', color: '#ec4899' },
+        { id: 'd', roleId: 'admin', name: 'Команда Администрация', color: '#8b5cf6' },
+        { id: 'e', roleId: 'business', name: 'Команда Бизнес', color: '#22c55e' }
     ]
 };
 
@@ -1961,6 +1962,21 @@ function getTeamData(teamId) {
     return state.teamsData[teamId] || initTeamData(teamId);
 }
 
+function getTeamForRealRole(realRoleId) {
+    const rid = String(realRoleId || '').trim();
+    const t = CONFIG.teams.find(x => x.roleId === rid);
+    return t || null;
+}
+
+function getLeastFilledTeam() {
+    const teamCounts = CONFIG.teams.map(t => ({
+        team: t,
+        count: state.participants.filter(p => p.team?.id === t.id).length
+    }));
+    teamCounts.sort((a, b) => a.count - b.count);
+    return teamCounts[0]?.team || CONFIG.teams[0];
+}
+
 // Проверить, является ли участник капитаном своей команды
 function isCaptain(participantId) {
     const participant = state.participants.find(p => p.id === participantId);
@@ -2448,13 +2464,8 @@ function completeJoinSessionStep2(code, name, realRole) {
     const assignedRole = availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)];
     state.user.gameRole = assignedRole;
     
-    // Назначаем команду (равномерно распределяем)
-    const teamCounts = CONFIG.teams.map(t => ({
-        team: t,
-        count: state.participants.filter(p => p.team?.id === t.id).length
-    }));
-    teamCounts.sort((a, b) => a.count - b.count);
-    const assignedTeam = teamCounts[0].team;
+    // Назначаем команду по реальной роли (Архитекторы/Активисты/Жители/Администрация/Бизнес)
+    const assignedTeam = getTeamForRealRole(realRole) || getLeastFilledTeam();
     state.user.team = assignedTeam;
     
     // Инициализируем параметры из новой структуры
@@ -3668,13 +3679,8 @@ function addParticipant(name, isBot = false, values = null, realRole = null) {
     const availableGameRoles = CONFIG.gameRoles.filter(r => r.id !== assignedRealRole);
     const assignedGameRole = availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)];
     
-    // Назначаем команду (распределяем равномерно)
-    const teamCounts = CONFIG.teams.map(t => ({
-        team: t,
-        count: state.participants.filter(p => p.team?.id === t.id).length
-    }));
-    teamCounts.sort((a, b) => a.count - b.count);
-    const assignedTeam = teamCounts[0].team;
+    // Назначаем команду по реальной роли (если есть), иначе — наименее заполненную
+    const assignedTeam = getTeamForRealRole(assignedRealRole) || getLeastFilledTeam();
     
     // Инициализируем данные команды, если нужно
     initTeamData(assignedTeam.id);
