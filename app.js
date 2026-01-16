@@ -1225,6 +1225,162 @@ function downloadCurrentProtocol() {
     downloadFile(`protocol_${protocol.session.code}_${stamp}.json`, JSON.stringify(protocol, null, 2));
 }
 
+// =====================================================
+// ПРОТОКОЛ-ОТЧЁТ (TXT/HTML/PDF)
+// =====================================================
+
+function translitRuToLat(str) {
+    const map = {
+        А: 'A', Б: 'B', В: 'V', Г: 'G', Д: 'D', Е: 'E', Ё: 'E', Ж: 'Zh', З: 'Z', И: 'I', Й: 'Y', К: 'K', Л: 'L', М: 'M', Н: 'N', О: 'O', П: 'P', Р: 'R', С: 'S', Т: 'T', У: 'U', Ф: 'F', Х: 'Kh', Ц: 'Ts', Ч: 'Ch', Ш: 'Sh', Щ: 'Sch', Ъ: '', Ы: 'Y', Ь: '', Э: 'E', Ю: 'Yu', Я: 'Ya',
+        а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya'
+    };
+    return String(str || '').split('').map(ch => (ch in map ? map[ch] : ch)).join('');
+}
+
+function buildProtocolReport() {
+    const now = new Date();
+    const decisionPhase = getLatestDecisionPhase(state.session.phase);
+    const activeTeams = getActiveTeams();
+    const avg = calculateAverageIGS();
+    const conflict = calculateConflict();
+    const participants = state.participants.filter(p => !p.isBot);
+
+    const teams = activeTeams.map(t => {
+        const members = getTeamMembers(t.id).filter(p => !p.isBot);
+        const stats = getTeamConfirmationStats(t.id, decisionPhase);
+        const igs = calculateTeamIGS(t.id, decisionPhase);
+        return {
+            id: t.id,
+            name: t.name,
+            color: t.color,
+            members: members.map(m => ({
+                id: m.id,
+                name: m.name,
+                realRole: CONFIG.realRoles[m.realRole]?.name || m.realRole || '-',
+                gameRole: m.gameRole?.name || '-',
+                isCaptain: !!m.isCaptain,
+                confirmed: isParticipantConfirmedForCurrentDecision(m, t.id, decisionPhase),
+                confirmationAt: getParticipantConfirmation(m, decisionPhase)?.at || null
+            })),
+            confirmed: stats,
+            igs
+        };
+    });
+
+    return {
+        version: 1,
+        generatedAt: now.toISOString(),
+        session: {
+            code: state.session.code,
+            name: state.session.name,
+            phase: state.session.phase,
+            phaseName: CONFIG.phases[state.session.phase]?.name || '',
+            createdAt: state.session.createdAt ? (state.session.createdAt.toISOString ? state.session.createdAt.toISOString() : state.session.createdAt) : null,
+            completedAt: state.session.completedAt ? (state.session.completedAt.toISOString ? state.session.completedAt.toISOString() : state.session.completedAt) : null,
+            projectScale: state.session.projectScale,
+            budgetLevel: state.session.budgetLevel,
+            budgetTotal: state.session.budgetTotal,
+            timers: state.session.timers || {}
+        },
+        summary: {
+            teams: activeTeams.length,
+            participants: participants.length,
+            decisionPhase,
+            consensusIGS: avg ? Number(avg.total.toFixed(1)) : null,
+            conflictD: Number(conflict.toFixed(1)),
+            syncS: (() => {
+                const confirmedCount = participants.filter(p => p.team?.id && isParticipantConfirmedForCurrentDecision(p, p.team.id, decisionPhase)).length;
+                return participants.length ? Math.round((confirmedCount / participants.length) * 100) : 0;
+            })()
+        },
+        teams,
+        log: state.log || []
+    };
+}
+
+function buildProtocolText(report) {
+    const r = report || buildProtocolReport();
+    const lines = [];
+    lines.push(`ГОРОДСКОЙ СИМУЛЯТОР — ПРОТОКОЛ`);
+    lines.push(`Сессия: ${r.session.name} (${r.session.code})`);
+    lines.push(`Фаза: ${r.session.phase} — ${r.session.phaseName}`);
+    lines.push(`Дата выгрузки: ${formatDateTime(new Date(r.generatedAt))}`);
+    lines.push('');
+    lines.push(`Итоги: консенсус ИГС=${r.summary.consensusIGS ?? '—'} | конфликт D=${r.summary.conflictD} | синхронизация=${r.summary.syncS}%`);
+    lines.push('');
+    r.teams.forEach(t => {
+        lines.push(`${t.name}: ИГС=${t.igs.total.toFixed(1)} | подтверждено ${t.confirmed.confirmed}/${t.confirmed.total}`);
+        t.members.forEach(m => {
+            const mark = m.confirmed ? '✓' : '○';
+            const cap = m.isCaptain ? '👑 ' : '';
+            lines.push(`  - ${mark} ${cap}${m.name} (${m.realRole} / ${m.gameRole})`);
+        });
+        lines.push('');
+    });
+    if (Array.isArray(r.log) && r.log.length) {
+        lines.push('Лог:');
+        r.log.slice(-200).forEach(e => {
+            lines.push(`- ${formatDateTime(new Date(e.time))} [${e.type}] ${e.message}`);
+        });
+    }
+    return lines.join('\n');
+}
+
+function buildProtocolHtml(report) {
+    const r = report || buildProtocolReport();
+    const esc = (s) => String(s ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    return `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Протокол ${esc(r.session.code)}</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;color:#111;background:#fff}
+    h1{margin:0 0 8px;font-size:22px}
+    .meta{color:#444;margin:0 0 18px}
+    .kpi{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0 18px}
+    .kpi div{border:1px solid #ddd;border-radius:10px;padding:10px 12px}
+    table{border-collapse:collapse;width:100%;margin:10px 0 18px}
+    th,td{border:1px solid #ddd;padding:8px 10px;font-size:13px;text-align:left;vertical-align:top}
+    th{background:#f6f6f6}
+    .team{margin:18px 0 6px;font-weight:700}
+    .log{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:10px}
+  </style>
+</head>
+<body>
+  <h1>Городской Симулятор — Протокол</h1>
+  <div class="meta">
+    <div><b>Сессия:</b> ${esc(r.session.name)} (<b>${esc(r.session.code)}</b>)</div>
+    <div><b>Фаза:</b> ${esc(r.session.phase)} — ${esc(r.session.phaseName)}</div>
+    <div><b>Дата выгрузки:</b> ${esc(formatDateTime(new Date(r.generatedAt)))}</div>
+  </div>
+  <div class="kpi">
+    <div><b>Консенсус ИГС:</b> ${esc(r.summary.consensusIGS ?? '—')}</div>
+    <div><b>Конфликт D:</b> ${esc(r.summary.conflictD)}</div>
+    <div><b>Синхронизация:</b> ${esc(r.summary.syncS)}%</div>
+  </div>
+  ${r.teams.map(t => `
+    <div class="team">${esc(t.name)} — ИГС ${esc(t.igs.total.toFixed(1))} • подтверждено ${esc(t.confirmed.confirmed)}/${esc(t.confirmed.total)}</div>
+    <table>
+      <thead><tr><th>Участник</th><th>Роли</th><th>Статус</th></tr></thead>
+      <tbody>
+        ${t.members.map(m => `
+          <tr>
+            <td>${esc(m.name)}${m.isCaptain ? ' 👑' : ''}</td>
+            <td>${esc(m.realRole)} / ${esc(m.gameRole)}</td>
+            <td>${m.confirmed ? '✓ подтвердил' : '○ не подтвердил'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `).join('')}
+  <h2>Лог</h2>
+  <div class="log">${esc((r.log || []).slice(-200).map(e => `${formatDateTime(new Date(e.time))} [${e.type}] ${e.message}`).join('\n'))}</div>
+</body>
+</html>`;
+}
+
 function downloadProtocolBySessionCode(sessionCode) {
     const code = String(sessionCode || '').trim().toUpperCase();
     if (!code) return Promise.reject(new Error('Empty session code'));
@@ -4132,6 +4288,9 @@ function initExportModal() {
 }
 
 function exportData(format) {
+    const stamp = new Date().toISOString().replaceAll(':', '-');
+    const report = buildProtocolReport();
+    const code = report.session.code || 'SESSION';
     const data = {
         session: state.session,
         parameters: state.parameters,
@@ -4142,12 +4301,12 @@ function exportData(format) {
     
     switch (format) {
         case 'json':
-            downloadFile('simulation_data.json', JSON.stringify(data, null, 2));
+            downloadFile(`protocol_${code}_${stamp}.json`, JSON.stringify(report, null, 2), 'application/json;charset=utf-8');
             break;
             
         case 'csv':
             const csv = generateCSV();
-            downloadFile('simulation_data.csv', csv);
+            downloadFile(`protocol_${code}_${stamp}.csv`, csv, 'text/csv;charset=utf-8');
             break;
             
         case 'xlsx':
@@ -4163,7 +4322,15 @@ function exportData(format) {
                 showNotification('Экспорт PDF недоступен: библиотека jsPDF не загрузилась (проверьте интернет).', 'error');
                 return;
             }
-            generatePDF(data);
+            generatePDF(report);
+            break;
+
+        case 'txt':
+            downloadFile(`protocol_${code}_${stamp}.txt`, buildProtocolText(report), 'text/plain;charset=utf-8');
+            break;
+
+        case 'html':
+            downloadFile(`protocol_${code}_${stamp}.html`, buildProtocolHtml(report), 'text/html;charset=utf-8');
             break;
     }
     
@@ -4248,64 +4415,68 @@ function generateXLSX(data) {
     XLSX.writeFile(wb, 'simulation_data.xlsx');
 }
 
-function generatePDF(data) {
+function generatePDF(report) {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
-    const activeTeams = getActiveTeams();
+    const r = report || buildProtocolReport();
+    const activeTeams = r.teams || [];
     
     // Заголовок
     doc.setFontSize(20);
-    doc.text('Отчёт симуляции ИГС', 105, 20, { align: 'center' });
+    // Важно: кириллица без шрифтов в jsPDF отображается некорректно.
+    // Делаем транслитерацию, а оригинал отдаём в TXT/HTML.
+    doc.text('City Simulation Report (protocol)', 105, 20, { align: 'center' });
     
     doc.setFontSize(12);
-    doc.text(`Сессия: ${state.session.name}`, 20, 35);
-    doc.text(`Код: ${state.session.code}`, 20, 42);
+    doc.text(`Session: ${translitRuToLat(r.session.name)}`, 20, 35);
+    doc.text(`Code: ${r.session.code}`, 20, 42);
     doc.text(`Дата: ${formatDateTime(new Date())}`, 20, 49);
-    doc.text(`Команд: ${activeTeams.length} | Участников: ${state.participants.length}`, 20, 56);
+    doc.text(`Teams: ${activeTeams.length} | Participants: ${r.summary.participants}`, 20, 56);
+    doc.setFontSize(10);
+    doc.text('Note: Cyrillic is available in HTML/TXT exports. This PDF uses transliteration.', 20, 63);
     
     // ИГС Консенсуса
-    const avgIGS = calculateAverageIGS();
-    if (avgIGS) {
+    if (r.summary.consensusIGS !== null) {
         doc.setFontSize(16);
-        doc.text(`ИГС Консенсуса: ${avgIGS.total.toFixed(1)}`, 20, 70);
-        doc.text(`Конфликт D: ${calculateConflict().toFixed(1)}`, 120, 70);
+        doc.text(`Consensus IGS: ${Number(r.summary.consensusIGS).toFixed(1)}`, 20, 76);
+        doc.text(`Conflict D: ${Number(r.summary.conflictD).toFixed(1)}`, 120, 76);
     }
     
     // Компоненты ИГС
     doc.setFontSize(14);
-    doc.text('Компоненты ИГС по командам:', 20, 85);
+    doc.text('Teams:', 20, 90);
     
     doc.setFontSize(10);
-    let y = 95;
+    let y = 100;
     activeTeams.forEach(team => {
-        const igs = calculateTeamIGS(team.id);
-        const stats = getTeamConfirmationStats(team.id, getLatestDecisionPhase(state.session.phase));
-        doc.text(`${team.name}: ИГС = ${igs.total.toFixed(1)} (подтверждено: ${stats.confirmed}/${stats.total})`, 25, y);
+        doc.text(`${translitRuToLat(team.name)}: IGS = ${team.igs.total.toFixed(1)} (confirmed: ${team.confirmed.confirmed}/${team.confirmed.total})`, 25, y);
         y += 6;
     });
     
     // Участники
     doc.setFontSize(14);
     y += 10;
-    doc.text('Участники:', 20, y);
+    doc.text('Participants:', 20, y);
     
     doc.setFontSize(10);
     y += 10;
-    state.participants.forEach(p => {
-        const captain = p.isCaptain ? ' 👑' : '';
-        doc.text(`${p.name}${captain} - ${p.team?.name || '-'}`, 25, y);
-        y += 6;
-        if (y > 270) {
-            doc.addPage();
-            y = 20;
-        }
+    (r.teams || []).forEach(t => {
+        (t.members || []).forEach(p => {
+            const captain = p.isCaptain ? ' (captain)' : '';
+            doc.text(`${translitRuToLat(p.name)}${captain} - ${translitRuToLat(t.name)}`, 25, y);
+            y += 6;
+            if (y > 270) {
+                doc.addPage();
+                y = 20;
+            }
+        });
     });
     
-    doc.save('simulation_report.pdf');
+    doc.save(`protocol_${r.session.code}_${new Date().toISOString().replaceAll(':', '-')}.pdf`);
 }
 
-function downloadFile(filename, content) {
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+function downloadFile(filename, content, mimeType = 'text/plain;charset=utf-8') {
+    const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
