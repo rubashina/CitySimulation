@@ -2097,6 +2097,25 @@ body.display-mode #add-bot-btn {
     margin-bottom: 1rem;
 }
 
+.endgame-grade {
+    margin-top: -0.25rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+}
+
+.endgame-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin: 0.75rem 0 0.5rem;
+}
+
+.endgame-actions .btn {
+    width: auto;
+}
+
 @media (max-width: 480px) {
     html {
         font-size: 14px;

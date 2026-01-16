@@ -1156,6 +1156,9 @@ const state = {
     
     // Очередь событий
     eventsQueue: [],
+
+    // История событий (для протокола)
+    eventsHistory: [],
     
     // Графики
     charts: {
@@ -1245,6 +1248,8 @@ function buildProtocolReport() {
     const avg = calculateAverageIGS();
     const conflict = calculateConflict();
     const participants = state.participants.filter(p => !p.isBot);
+    const allParams = getAllParameters();
+    const defaultById = new Map(allParams.map(p => [p.id, p.default]));
 
     const teams = activeTeams.map(t => {
         const members = getTeamMembers(t.id).filter(p => !p.isBot);
@@ -1265,6 +1270,43 @@ function buildProtocolReport() {
             })),
             confirmed: stats,
             igs
+        };
+    });
+
+    const decisionPhases = Array.from(new Set([1, 4, getLatestDecisionPhase(state.session.phase)]))
+        .filter(p => Number.isFinite(Number(p)))
+        .map(p => Number(p))
+        .sort((a, b) => a - b);
+
+    const decisionsByParticipant = participants.map(p => {
+        ensureParticipantMeta(p);
+        const byPhase = {};
+        decisionPhases.forEach(ph => {
+            const rec = getParticipantConfirmation(p, ph);
+            const params = (rec?.confirmed && Array.isArray(rec.parameters)) ? rec.parameters : null;
+            byPhase[String(ph)] = {
+                confirmed: !!rec?.confirmed,
+                at: rec?.at || null,
+                igs: params ? calculateIGS(params).total : null,
+                parameters: params
+                    ? allParams.map(def => {
+                        const v = params.find(x => x.id === def.id)?.value;
+                        const val = (typeof v === 'number') ? v : def.default;
+                        const d = Number(defaultById.get(def.id) ?? def.default);
+                        return { id: def.id, name: def.name, value: val, default: d, delta: Number(val) - d };
+                    })
+                    : null
+            };
+        });
+        return {
+            id: p.id,
+            name: p.name,
+            team: p.team?.name || null,
+            teamId: p.team?.id || null,
+            realRole: CONFIG.realRoles[p.realRole]?.name || p.realRole || '-',
+            gameRole: p.gameRole?.name || '-',
+            isCaptain: !!p.isCaptain,
+            decisions: byPhase
         };
     });
 
@@ -1295,6 +1337,9 @@ function buildProtocolReport() {
             })()
         },
         teams,
+        decisionsByParticipant,
+        timeline: state.timelineData || [],
+        events: state.eventsHistory || [],
         log: state.log || []
     };
 }
@@ -1324,6 +1369,25 @@ function buildProtocolText(report) {
             lines.push(`- ${formatDateTime(new Date(e.time))} [${e.type}] ${e.message}`);
         });
     }
+    lines.push('');
+    lines.push('Решения участников (таблица: параметр / default / фаза1 / фаза4):');
+    (r.decisionsByParticipant || []).forEach(p => {
+        lines.push('');
+        lines.push(`${p.name} — ${p.team || '-'} (${p.realRole} / ${p.gameRole})`);
+        const d1 = p.decisions?.['1'];
+        const d4 = p.decisions?.['4'];
+        lines.push(`  ИГС ф1: ${d1?.igs ?? '—'} | ИГС ф4: ${d4?.igs ?? '—'}`);
+        const params = d1?.parameters || d4?.parameters;
+        if (!params) {
+            lines.push('  (нет подтверждённых решений)');
+            return;
+        }
+        params.forEach(row => {
+            const v1 = d1?.parameters?.find(x => x.id === row.id)?.value;
+            const v4 = d4?.parameters?.find(x => x.id === row.id)?.value;
+            lines.push(`  - ${row.name}: def=${row.default} | ф1=${(typeof v1 === 'number') ? v1 : '—'} | ф4=${(typeof v4 === 'number') ? v4 : '—'}`);
+        });
+    });
     return lines.join('\n');
 }
 
@@ -1347,6 +1411,7 @@ function buildProtocolHtml(report) {
     th{background:#f6f6f6}
     .team{margin:18px 0 6px;font-weight:700}
     .log{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:10px}
+    .small{color:#555;font-size:12px}
   </style>
 </head>
 <body>
@@ -1376,6 +1441,64 @@ function buildProtocolHtml(report) {
       </tbody>
     </table>
   `).join('')}
+  <h2>Решения участников (таблица)</h2>
+  <div class="small">Колонки: default / фаза 1 / фаза 4. Если участник не подтвердил фазу — значение “—”.</div>
+  ${(r.decisionsByParticipant || []).map(p => {
+      const d1 = p.decisions?.['1'];
+      const d4 = p.decisions?.['4'];
+      const base = d1?.parameters || d4?.parameters || [];
+      return `
+        <div class="team">${esc(p.name)} — ${esc(p.team || '-')} ${p.isCaptain ? '👑' : ''}</div>
+        <div class="small">Роли: ${esc(p.realRole)} / ${esc(p.gameRole)} • ИГС ф1: ${esc(d1?.igs ?? '—')} • ИГС ф4: ${esc(d4?.igs ?? '—')}</div>
+        <table>
+          <thead><tr><th>Параметр</th><th>Default</th><th>Фаза 1</th><th>Фаза 4</th></tr></thead>
+          <tbody>
+            ${base.map(row => {
+                const v1 = d1?.parameters?.find(x => x.id === row.id)?.value;
+                const v4 = d4?.parameters?.find(x => x.id === row.id)?.value;
+                return `<tr>
+                  <td>${esc(row.name)}</td>
+                  <td>${esc(row.default)}</td>
+                  <td>${esc((typeof v1 === 'number') ? v1 : '—')}</td>
+                  <td>${esc((typeof v4 === 'number') ? v4 : '—')}</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+  }).join('')}
+
+  <h2>Динамика (timeline)</h2>
+  <table>
+    <thead><tr><th>Время</th><th>Фаза</th><th>Консенсус ИГС</th><th>Конфликт D</th></tr></thead>
+    <tbody>
+      ${(r.timeline || []).slice(-200).map(t => `
+        <tr>
+          <td>${esc(formatDateTime(new Date(t.time)))}</td>
+          <td>${esc(t.phase)}</td>
+          <td>${esc(Number(t.consensusIGS ?? 0).toFixed(1))}</td>
+          <td>${esc(Number(t.conflict ?? 0).toFixed(1))}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+
+  <h2>События</h2>
+  ${(r.events || []).length ? `
+    <table>
+      <thead><tr><th>Время</th><th>Название</th><th>Эффекты</th><th>Изменения</th></tr></thead>
+      <tbody>
+        ${(r.events || []).map(ev => `
+          <tr>
+            <td>${esc(formatDateTime(new Date(ev.time)))}</td>
+            <td>${esc(ev.name || 'Событие')}</td>
+            <td>${esc(ev.effect || 'multi')}</td>
+            <td>${esc((ev.impact && ev.impact.length) ? ev.impact.join('; ') : '—')}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  ` : `<div class="small">События не зафиксированы.</div>`}
   <h2>Лог</h2>
   <div class="log">${esc((r.log || []).slice(-200).map(e => `${formatDateTime(new Date(e.time))} [${e.type}] ${e.message}`).join('\n'))}</div>
 </body>
@@ -3318,6 +3441,11 @@ function updatePhaseUI() {
 function initEndgameOverlay() {
     const closeBtn = $('#endgame-close');
     if (closeBtn) closeBtn.addEventListener('click', hideEndgameOverlay);
+
+    // Экспорт протокола прямо с табло финала
+    $('#endgame-download-html')?.addEventListener('click', () => exportData('html'));
+    $('#endgame-download-txt')?.addEventListener('click', () => exportData('txt'));
+    $('#endgame-download-json')?.addEventListener('click', () => exportData('json'));
 }
 
 function hideEndgameOverlay() {
@@ -3329,6 +3457,7 @@ function showEndgameOverlay() {
     const overlay = $('#endgame-overlay');
     const valueEl = $('#endgame-igs-value');
     const sparklineEl = $('#endgame-sparkline');
+    const gradeEl = $('#endgame-igs-grade');
     if (!overlay || !valueEl || !sparklineEl) return;
     
     // Итоговый консенсус
@@ -3350,6 +3479,11 @@ function showEndgameOverlay() {
         if (t < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
+
+    if (gradeEl) {
+        const pct = normalizeIGSPercent(target);
+        gradeEl.textContent = `${getIGSGradeText(target)} • ${pct.toFixed(0)}% от максимума модели`;
+    }
     
     // Спарклайн по динамике консенсуса
     const points = (state.timelineData || [])
@@ -3961,9 +4095,41 @@ function sendEvent() {
 }
 
 function applyEventEffect(event) {
+    if (!state.eventsHistory) state.eventsHistory = [];
+    const topLevel = !event?._internal;
+    const beforeLocks = topLevel ? { ...(state.locks || {}) } : null;
+    const beforeConstraints = topLevel ? JSON.parse(JSON.stringify(state.constraints || {})) : null;
+
     // Мульти-сценарии: применяем набор эффектов
     if (Array.isArray(event.actions) && event.actions.length > 0) {
-        event.actions.forEach(a => applyEventEffect({ effect: a.effect, params: a }));
+        event.actions.forEach(a => applyEventEffect({ effect: a.effect, params: a, _internal: true }));
+        if (topLevel) {
+            const impact = [];
+            // diff locks
+            const afterLocks = state.locks || {};
+            const allLockKeys = new Set([...Object.keys(beforeLocks || {}), ...Object.keys(afterLocks || {})]);
+            allLockKeys.forEach(k => {
+                const b = beforeLocks?.[k];
+                const a = afterLocks?.[k];
+                if (b !== a) impact.push(`lock ${k}: ${String(b)} → ${String(a)}`);
+            });
+            // diff constraints
+            const afterConstraints = state.constraints || {};
+            const allCKeys = new Set([...Object.keys(beforeConstraints || {}), ...Object.keys(afterConstraints || {})]);
+            allCKeys.forEach(k => {
+                const b = JSON.stringify(beforeConstraints?.[k] || {});
+                const a = JSON.stringify(afterConstraints?.[k] || {});
+                if (b !== a) impact.push(`constraint ${k}: ${b} → ${a}`);
+            });
+            state.eventsHistory.push({
+                time: event.time || new Date(),
+                name: event.name,
+                desc: event.desc,
+                effect: 'multi',
+                actions: event.actions,
+                impact
+            });
+        }
         return;
     }
     switch (event.effect) {
@@ -3999,6 +4165,41 @@ function applyEventEffect(event) {
                 if (param) param.value = event.params.value;
             });
             break;
+    }
+
+    // Для одиночного события фиксируем влияние
+    if (topLevel) {
+        const impact = [];
+        const afterLocks = state.locks || {};
+        const afterConstraints = state.constraints || {};
+        if (event.effect === 'lock') impact.push(`lock ${event.params?.parameter} = true`);
+        if (event.effect === 'lock_all') impact.push(`lock_all`);
+        if (event.effect === 'limit_min') impact.push(`min ${event.params?.parameter} = ${event.params?.value}`);
+        if (event.effect === 'limit_max') impact.push(`max ${event.params?.parameter} = ${event.params?.value}`);
+        if (event.effect === 'force') impact.push(`force ${event.params?.parameter} = ${event.params?.value}`);
+
+        // плюс дифф общего состояния (на случай кастомного эффекта)
+        const allLockKeys = new Set([...Object.keys(beforeLocks || {}), ...Object.keys(afterLocks || {})]);
+        allLockKeys.forEach(k => {
+            const b = beforeLocks?.[k];
+            const a = afterLocks?.[k];
+            if (b !== a) impact.push(`lock ${k}: ${String(b)} → ${String(a)}`);
+        });
+        const allCKeys = new Set([...Object.keys(beforeConstraints || {}), ...Object.keys(afterConstraints || {})]);
+        allCKeys.forEach(k => {
+            const b = JSON.stringify(beforeConstraints?.[k] || {});
+            const a = JSON.stringify(afterConstraints?.[k] || {});
+            if (b !== a) impact.push(`constraint ${k}: ${b} → ${a}`);
+        });
+
+        state.eventsHistory.push({
+            time: event.time || new Date(),
+            name: event.name,
+            desc: event.desc,
+            effect: event.effect,
+            params: event.params || {},
+            impact
+        });
     }
 }
 
