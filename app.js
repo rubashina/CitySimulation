@@ -22,34 +22,6 @@ const FIREBASE_CONFIG = {
 let firebaseApp = null;
 let firebaseDB = null;
 let firebaseEnabled = false;
-let firebaseConnected = null; // true/false/null
-
-function isFirebasePermissionDenied(error) {
-    const msg = String(error?.code || error?.message || error?.name || '').toLowerCase();
-    return msg.includes('permission_denied') || msg.includes('permission denied');
-}
-
-function withTimeout(promise, ms, label = 'operation') {
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(`Timeout: ${label}`)), ms);
-    });
-    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
-}
-
-function handleFirebaseFatalError(error, context = '') {
-    console.error('❌ Firebase fatal error', context, error);
-    
-    if (isFirebasePermissionDenied(error)) {
-        firebaseEnabled = false;
-        showNotification(
-            'Нет прав доступа к Firebase (permission_denied). Онлайн-синхронизация отключена. ' +
-            'Откройте модератора и участника в разных вкладках на одном устройстве (локальный режим) ' +
-            'или настройте Firebase Rules / доступ в консоли.',
-            'error'
-        );
-    }
-}
 
 // =====================================================
 // ЛОКАЛЬНАЯ СИНХРОНИЗАЦИЯ (fallback без Firebase)
@@ -202,9 +174,12 @@ function handleLocalMessage(msg) {
             }
             break;
         case 'participants_child_added':
-            if (msg.participant && !state.participants.find(p => p.id === msg.participant.id)) {
-                state.participants.push(msg.participant);
-                if (msg.participant.team) initTeamData(msg.participant.team.id);
+            if (msg.participant) {
+                const incoming = ensureParticipantMeta(msg.participant);
+                const idx = state.participants.findIndex(p => p.id === incoming.id);
+                if (idx >= 0) state.participants[idx] = incoming;
+                else state.participants.push(incoming);
+                if (incoming.team) initTeamData(incoming.team.id);
                 if (state.user.isModerator) {
                     renderParticipantsList();
                     renderParamsMatrix();
@@ -225,6 +200,7 @@ function handleLocalMessage(msg) {
                     updateCharts();
                 } else {
                     updateIGSDisplay();
+                    updateConfirmButton();
                 }
             }
             break;
@@ -256,7 +232,7 @@ function syncSessionFromLocal(data) {
         if (typeof data.phase === 'number') state.session.phase = data.phase;
     }
     if (data.participants) {
-        state.participants = Object.values(data.participants);
+        state.participants = Object.values(data.participants).map(p => ensureParticipantMeta(p));
         // Инициализация teamData для всех команд
         state.participants.forEach(p => p.team && initTeamData(p.team.id));
     }
@@ -274,31 +250,9 @@ function initFirebase() {
     
     try {
         firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
-        
-        // В некоторых сетях (особенно учебных Wi‑Fi) WebSocket для RTDB блокируется,
-        // и тогда подключения "висят" без явной ошибки. Принудительный long-polling
-        // обычно решает проблему.
-        try {
-            const urlParams = new URLSearchParams(window.location.search);
-            const forceLP = urlParams.get('lp') === '1' || urlParams.get('longpoll') === '1';
-            if (forceLP && firebase?.database?.INTERNAL?.forceLongPolling) {
-                firebase.database.INTERNAL.forceLongPolling();
-                console.log('🌐 Firebase: forceLongPolling включен (lp=1)');
-            }
-        } catch (_) {}
-        
         firebaseDB = firebase.database();
         firebaseEnabled = true;
         console.log('✅ Firebase подключен');
-
-        // Отслеживаем состояние соединения с Firebase (помогает при "вечном подключении" без ошибок)
-        try {
-            firebaseDB.ref('.info/connected').on('value', (snap) => {
-                firebaseConnected = !!snap.val();
-                console.log('🌐 Firebase connected:', firebaseConnected);
-            });
-        } catch (_) {}
-
         return true;
     } catch (error) {
         console.error('❌ Ошибка Firebase:', error);
@@ -332,7 +286,7 @@ function subscribeToSession(sessionCode) {
         if (sessionData) {
             syncSessionDataFromFirebase(sessionData);
         }
-    }, (error) => handleFirebaseFatalError(error, 'subscribe session'));
+    });
     
     // Загружаем всех существующих участников (для модератора)
     if (state.user.isModerator) {
@@ -347,7 +301,7 @@ function subscribeToSession(sessionCode) {
                 // Очищаем список и загружаем заново
                 state.participants = [];
                 Object.keys(participants).forEach(participantId => {
-                    const participant = participants[participantId];
+                    const participant = ensureParticipantMeta(participants[participantId]);
                     console.log('  ➕ Добавляю участника:', participant.name);
                     if (!state.participants.find(p => p.id === participant.id)) {
                         state.participants.push(participant);
@@ -371,12 +325,17 @@ function subscribeToSession(sessionCode) {
     
     // Слушаем добавление новых участников
     sessionRef.child('participants').on('child_added', (snapshot) => {
-        const participant = snapshot.val();
+        const participant = ensureParticipantMeta(snapshot.val());
         console.log('🔔 child_added сработал! Участник:', participant?.name, 'Модератор?', state.user.isModerator);
         
-        if (participant && !state.participants.find(p => p.id === participant.id)) {
-            console.log('➕ Новый участник:', participant.name, 'Команда:', participant.team?.name);
-            state.participants.push(participant);
+        if (participant) {
+            const idx = state.participants.findIndex(p => p.id === participant.id);
+            if (idx >= 0) {
+                state.participants[idx] = participant;
+            } else {
+                console.log('➕ Новый участник:', participant.name, 'Команда:', participant.team?.name);
+                state.participants.push(participant);
+            }
             
             // Инициализируем данные команды если нужно
             if (participant.team) {
@@ -390,10 +349,26 @@ function subscribeToSession(sessionCode) {
                 updateMetrics();
                 console.log('✅ UI модератора обновлён. Всего участников:', state.participants.length);
             }
-        } else if (participant && state.participants.find(p => p.id === participant.id)) {
-            console.log('⚠️ Участник уже есть в списке:', participant.name);
         }
-    }, (error) => handleFirebaseFatalError(error, 'subscribe participants'));
+    });
+
+    // Слушаем изменения участников (подтверждения, смена роли и т.п.)
+    sessionRef.child('participants').on('child_changed', (snapshot) => {
+        const participant = ensureParticipantMeta(snapshot.val());
+        if (!participant) return;
+        const idx = state.participants.findIndex(p => p.id === participant.id);
+        if (idx >= 0) state.participants[idx] = participant;
+        else state.participants.push(participant);
+        if (participant.team) initTeamData(participant.team.id);
+        if (state.user.isModerator) {
+            renderParticipantsList();
+            renderParamsMatrix();
+            updateMetrics();
+        } else {
+            // Обновим статус кнопки подтверждения и текст (решение могло стать "устаревшим")
+            updateConfirmButton();
+        }
+    });
     
     // Слушаем изменения команд
     sessionRef.child('teams').on('value', (snapshot) => {
@@ -421,9 +396,10 @@ function subscribeToSession(sessionCode) {
                 updateCharts();
             } else {
                 updateIGSDisplay();
+                updateConfirmButton();
             }
         }
-    }, (error) => handleFirebaseFatalError(error, 'subscribe teams'));
+    });
     
     // Слушаем изменения фазы
     sessionRef.child('phase').on('value', (snapshot) => {
@@ -448,7 +424,7 @@ function subscribeToSession(sessionCode) {
             
             addToLog('phase', `Переход к фазе ${phase}: ${CONFIG.phases[phase]?.name}`);
         }
-    }, (error) => handleFirebaseFatalError(error, 'subscribe phase'));
+    });
 
     // Сообщения модератора
     sessionRef.child('broadcasts').limitToLast(20).on('child_added', (snapshot) => {
@@ -457,7 +433,7 @@ function subscribeToSession(sessionCode) {
         // Не показываем самому себе, если это модератор в той же вкладке
         if (payload.from && payload.from === state.user.name && state.user.isModerator) return;
         showBroadcast(payload.message, payload);
-    }, (error) => handleFirebaseFatalError(error, 'subscribe broadcasts'));
+    });
 
     // События модератора (интермиссия и т.п.)
     sessionRef.child('events').limitToLast(20).on('child_added', (snapshot) => {
@@ -471,7 +447,7 @@ function subscribeToSession(sessionCode) {
             updateConfirmButton();
             showNotification(`Событие: ${event.name || 'изменение условий'}`, 'warning');
         }
-    }, (error) => handleFirebaseFatalError(error, 'subscribe events'));
+    });
     
     console.log(`📡 Подписка на сессию ${sessionCode}`);
 }
@@ -488,7 +464,7 @@ function syncSessionDataFromFirebase(sessionData) {
     state.session = { ...state.session, ...rest, createdAt };
     
     // Обновляем заголовки/баннеры (фаза уже в state.session.phase)
-        updatePhaseUI();
+    updatePhaseUI();
 }
 
 // Сохранение сессии в Firebase
@@ -497,13 +473,13 @@ function saveSessionToFirebase() {
     if (!firebaseEnabled) {
         if (!state.session.code) return;
         const existing = localReadSession(state.session.code) || {};
-    const data = {
-        session: {
-            name: state.session.name,
-            isPaused: state.session.isPaused,
-            projectScale: state.session.projectScale,
-            budgetLevel: state.session.budgetLevel,
-            budgetTotal: state.session.budgetTotal,
+        const data = {
+            session: {
+                name: state.session.name,
+                isPaused: state.session.isPaused,
+                projectScale: state.session.projectScale,
+                budgetLevel: state.session.budgetLevel,
+                budgetTotal: state.session.budgetTotal,
                 budgetUsed: state.session.budgetUsed,
                 createdAt: state.session.createdAt ? state.session.createdAt.toISOString() : null
             },
@@ -543,9 +519,6 @@ function saveSessionToFirebase() {
         console.log('✅ Сессия сохранена в Firebase');
     }).catch((error) => {
         console.error('❌ Ошибка сохранения сессии:', error);
-        handleFirebaseFatalError(error, 'save session');
-        // fallback: локально
-        if (!firebaseEnabled) saveSessionToFirebase();
     });
 }
 
@@ -579,8 +552,6 @@ function saveParticipantToFirebase(participant) {
         console.log('✅ Участник сохранён в Firebase:', participant.name);
     }).catch((error) => {
         console.error('❌ Ошибка сохранения участника:', error);
-        handleFirebaseFatalError(error, 'save participant');
-        if (!firebaseEnabled) saveParticipantToFirebase(participant);
     });
 }
 
@@ -616,8 +587,6 @@ function saveTeamToFirebase(teamId) {
         console.log(`✅ Команда ${teamId} сохранена в Firebase`);
     }).catch((error) => {
         console.error(`❌ Ошибка сохранения команды ${teamId}:`, error);
-        handleFirebaseFatalError(error, 'save team');
-        if (!firebaseEnabled) saveTeamToFirebase(teamId);
     });
 }
 
@@ -648,8 +617,6 @@ function updatePhaseInFirebase(phase) {
         console.log('✅ Фаза отправлена в Firebase');
     }).catch((error) => {
         console.error('❌ Ошибка отправки фазы:', error);
-        handleFirebaseFatalError(error, 'update phase');
-        if (!firebaseEnabled) updatePhaseInFirebase(phase);
     });
 }
 
@@ -991,7 +958,12 @@ const state = {
     },
     
     // История значений для графиков
-    timelineData: []
+    timelineData: [],
+
+    // UI-состояние (локально, не синхронизируем)
+    ui: {
+        accordionOpen: {} // { [categoryId]: boolean }
+    }
 };
 
 // =====================================================
@@ -1282,6 +1254,8 @@ function initTeamData(teamId) {
             parameters: parameters,
             confirmed: false,
             captainId: null,
+            // Ревизии решения по фазам (для персональных подтверждений)
+            phaseRevisions: {},
             // Ограничение ходов (сколько разных ползунков трогали в текущей фазе ввода)
             movesPhase: null,
             movesUsed: [],
@@ -1335,6 +1309,84 @@ function getTeamMembers(teamId) {
 function getActiveTeams() {
     const activeTeamIds = [...new Set(state.participants.map(p => p.team?.id).filter(Boolean))];
     return CONFIG.teams.filter(t => activeTeamIds.includes(t.id));
+}
+
+// =====================================================
+// УЧАСТНИКИ: подтверждения и снимки решений (персонально)
+// =====================================================
+
+function ensureParticipantMeta(p) {
+    if (!p || typeof p !== 'object') return p;
+    // legacy поля могут отсутствовать у старых участников из Firebase/localStorage
+    if (typeof p.confirmed !== 'boolean') p.confirmed = false;
+    if (typeof p.confirmedPhase !== 'number') p.confirmedPhase = null;
+    if (!p.confirmations || typeof p.confirmations !== 'object') p.confirmations = {};
+    return p;
+}
+
+function getParticipantById(participantId) {
+    const p = state.participants.find(x => x.id === participantId);
+    return ensureParticipantMeta(p);
+}
+
+function getTeamPhaseRevision(teamId, phase) {
+    const teamData = getTeamData(teamId);
+    if (!teamData.phaseRevisions || typeof teamData.phaseRevisions !== 'object') teamData.phaseRevisions = {};
+    const key = String(phase);
+    const v = Number(teamData.phaseRevisions[key] ?? 0);
+    return Number.isFinite(v) ? v : 0;
+}
+
+function bumpTeamPhaseRevision(teamId, phase) {
+    const teamData = getTeamData(teamId);
+    if (!teamData.phaseRevisions || typeof teamData.phaseRevisions !== 'object') teamData.phaseRevisions = {};
+    const key = String(phase);
+    const prev = Number(teamData.phaseRevisions[key] ?? 0);
+    const next = (Number.isFinite(prev) ? prev : 0) + 1;
+    teamData.phaseRevisions[key] = next;
+    // legacy флаг команды больше не является источником правды
+    teamData.confirmed = false;
+    return next;
+}
+
+function getParticipantConfirmation(p, phase) {
+    const pp = ensureParticipantMeta(p);
+    if (!pp) return null;
+    const rec = pp.confirmations?.[String(phase)];
+    return (rec && typeof rec === 'object') ? rec : null;
+}
+
+function isParticipantConfirmedForCurrentDecision(p, teamId, phase) {
+    const pp = ensureParticipantMeta(p);
+    if (!pp || !teamId) return false;
+    const rec = getParticipantConfirmation(pp, phase);
+    if (!rec?.confirmed) return false;
+    const teamRev = getTeamPhaseRevision(teamId, phase);
+    return Number(rec.revision ?? -1) === teamRev;
+}
+
+function isParticipantConfirmationStale(p, teamId, phase) {
+    const pp = ensureParticipantMeta(p);
+    if (!pp || !teamId) return false;
+    const rec = getParticipantConfirmation(pp, phase);
+    if (!rec?.confirmed) return false;
+    const teamRev = getTeamPhaseRevision(teamId, phase);
+    return Number(rec.revision ?? -1) !== teamRev;
+}
+
+function getTeamConfirmationStats(teamId, phase) {
+    const members = getTeamMembers(teamId).filter(p => !p.isBot);
+    const total = members.length;
+    const confirmed = members.filter(p => isParticipantConfirmedForCurrentDecision(p, teamId, phase)).length;
+    return { confirmed, total };
+}
+
+function isTeamDecisionLocked(teamId, phase) {
+    // Лочим изменения для капитана, когда все (не-боты) подтвердили текущую версию решения в фазе ввода
+    const isInputPhase = (phase === 1 || phase === 4);
+    if (!isInputPhase) return false;
+    const { confirmed, total } = getTeamConfirmationStats(teamId, phase);
+    return total > 0 && confirmed >= total;
 }
 
 // =====================================================
@@ -1470,7 +1522,7 @@ function joinSession(code, name, realRole) {
     // Если Firebase включен - сначала проверяем существование сессии
     if (firebaseEnabled) {
         const sessionRef = firebaseDB.ref(`sessions/${code}`);
-        return withTimeout(sessionRef.once('value'), 7000, 'Firebase joinSession').then((snapshot) => {
+        return sessionRef.once('value').then((snapshot) => {
             const sessionData = snapshot.val();
             
             if (!sessionData) {
@@ -1496,30 +1548,6 @@ function joinSession(code, name, realRole) {
             return true;
         }).catch((error) => {
             console.error('❌ Ошибка Firebase:', error);
-            handleFirebaseFatalError(error, 'join session');
-            
-            if (String(error?.message || '').toLowerCase().includes('timeout')) {
-                const hint = (firebaseConnected === false)
-                    ? 'Похоже, нет соединения с Firebase (.info/connected=false). Проверьте сеть/блокировки.'
-                    : 'Похоже, Firebase не отвечает. Проверьте сеть (часто блокируют домены firebaseio.com), попробуйте другой Wi‑Fi/браузер.';
-                showNotification(`Подключение к Firebase зависло. ${hint}`, 'error');
-            }
-            
-            if (!firebaseEnabled) {
-                // fallback to local
-                initLocalSync();
-                const localSession = localReadSession(code);
-                if (localSession) {
-                    if (localSession.session) {
-                        const createdAt = localSession.session.createdAt ? new Date(localSession.session.createdAt) : null;
-                        state.session = { ...state.session, ...localSession.session, createdAt };
-                    }
-                    state.session.code = code;
-                    state.session.phase = typeof localSession.phase === 'number' ? localSession.phase : (state.session.phase || 0);
-                    completeJoinSession(code, name, realRole);
-                    return true;
-                }
-            }
             showNotification('Ошибка подключения. Попробуйте снова.', 'error');
             throw error;
         });
@@ -1563,7 +1591,7 @@ function completeJoinSession(code, name, realRole) {
                 console.log('👥 Загружаю существующих участников перед подключением:', Object.keys(existingParticipants).length);
                 state.participants = [];
                 Object.values(existingParticipants).forEach(p => {
-                    state.participants.push(p);
+                    state.participants.push(ensureParticipantMeta(p));
                 });
             }
             
@@ -1604,7 +1632,11 @@ function completeJoinSessionStep2(code, name, realRole) {
         realRole: state.user.realRole,
         gameRole: assignedRole,
         team: assignedTeam,
-        isCaptain: false
+        isCaptain: false,
+        // Персональные подтверждения решений (по фазам)
+        confirmed: false,
+        confirmedPhase: null,
+        confirmations: {}
     };
     state.participants.push(participant);
     
@@ -1754,8 +1786,9 @@ function renderRoleCard() {
     if (gameRole && team) {
         const captainBadge = userIsCaptain ? ' 👑' : '';
         $('#role-name').textContent = `${gameRole.icon} ${gameRole.name}${captainBadge}`;
-        // В текущей версии управлять ползунками может любой участник в фазах ввода
-        $('#role-desc').textContent = gameRole.desc;
+        $('#role-desc').textContent = userIsCaptain 
+            ? 'Вы капитан команды! Управляйте ползунками параметров.' 
+            : gameRole.desc;
         $('#role-team').textContent = team.name + (userIsCaptain ? ' (капитан)' : '');
         $('#role-team').className = `role-team team-${team.id}`;
         roleCard.classList.remove('hidden');
@@ -1775,13 +1808,18 @@ function updateParticipantHeader() {
 function renderParameters() {
     const grid = $('#parameters-grid');
     grid.innerHTML = '';
+
+    // Аккордеон по категориям
+    if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+    if (!state.ui.accordionOpen || typeof state.ui.accordionOpen !== 'object') state.ui.accordionOpen = {};
     
-    // В фазах ввода управлять ползунками может любой участник команды
-    const userCanEdit = true;
+    // Проверяем, является ли пользователь капитаном
+    const userIsCaptain = isCaptain(state.user.id);
     const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
     const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+    const teamLockedByConfirmations = state.user.team ? isTeamDecisionLocked(state.user.team.id, currentPhase) : false;
     
     // Нормализуем состояние лимита ходов для команды
     if (teamData) {
@@ -1796,17 +1834,39 @@ function renderParameters() {
     
     // Рендерим параметры по категориям
     CONFIG.parameterCategories.forEach(category => {
-        // Заголовок категории
-        const categoryHeader = document.createElement('div');
-        categoryHeader.className = 'param-category-header';
-        categoryHeader.innerHTML = `
-            <span class="category-icon">${category.icon}</span>
+        const isOpen = !!state.ui.accordionOpen[category.id];
+
+        // Заголовок категории (кликабельный)
+        const headerBtn = document.createElement('button');
+        headerBtn.type = 'button';
+        headerBtn.className = 'param-accordion-header';
+        headerBtn.setAttribute('aria-expanded', String(isOpen));
+        headerBtn.setAttribute('aria-controls', `acc-body-${category.id}`);
+        headerBtn.innerHTML = `
+            <span class="category-icon" title="${category.name}">${category.icon}</span>
             <span class="category-name">${category.name}</span>
             <span class="category-weight" style="color: ${category.weight < 0 ? '#ef4444' : category.color}">
                 ${category.weight > 0 ? '+' : ''}${(category.weight * 100).toFixed(0)}%
             </span>
+            <span class="param-accordion-chevron" aria-hidden="true">▾</span>
         `;
-        grid.appendChild(categoryHeader);
+        grid.appendChild(headerBtn);
+
+        // Тело аккордеона (в нём лежат карточки-параметры)
+        const body = document.createElement('div');
+        body.className = 'param-accordion-body';
+        body.id = `acc-body-${category.id}`;
+        body.hidden = !isOpen;
+        // Чтобы карточки встраивались в общий grid (outer grid), а оболочка не ломала сетку
+        body.style.display = 'contents';
+        grid.appendChild(body);
+
+        headerBtn.addEventListener('click', () => {
+            const next = !state.ui.accordionOpen[category.id];
+            state.ui.accordionOpen[category.id] = next;
+            headerBtn.setAttribute('aria-expanded', String(next));
+            body.hidden = !next;
+        });
         
         // Параметры категории
         category.params.forEach(param => {
@@ -1819,28 +1879,21 @@ function renderParameters() {
             const teamParam = teamData?.parameters.find(p => p.id === param.id);
             const value = teamParam ? teamParam.value : param.default;
             
-            // Ползунок неактивен если не фаза ввода / подтверждено / заблокирован / исчерпан лимит ходов
+            // Ползунок неактивен если не капитан или заблокирован
             const alreadyUsedThisPhase = movesUsed.includes(param.id);
             const movesExhausted = movesRemaining <= 0;
             const blockedByMoveLimit = movesExhausted && !alreadyUsedThisPhase;
-            const isDisabled = !userCanEdit || isLocked || !isInputPhase || !!teamData?.confirmed || blockedByMoveLimit;
+            const isDisabled = !userIsCaptain || isLocked || !isInputPhase || teamLockedByConfirmations || blockedByMoveLimit;
             
             const card = document.createElement('div');
-            card.className = `param-card ${isLocked ? 'locked' : ''}`;
+            card.className = `param-card ${isLocked ? 'locked' : ''} ${!userIsCaptain ? 'readonly' : ''}`;
             card.style.borderLeftColor = category.color;
-            
-            const w = CONFIG.igsWeights?.[category.id] ?? 0;
-            const impactPer10 = w * param.weight * 10;
-            const impactText = impactPer10 === 0
-                ? ''
-                : `Влияние на ИГС: ${impactPer10 > 0 ? '+' : ''}${impactPer10.toFixed(2)} за +10`;
             card.innerHTML = `
                 <div class="param-header">
                     <span class="param-name">${param.name}</span>
                     <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
                 </div>
                 <p class="param-desc">${param.desc}</p>
-                ${impactText ? `<div class="input-hint">${impactText}</div>` : ''}
                 <div class="param-slider">
                     <input type="range" class="slider" id="slider-${param.id}" 
                            min="${min}" max="${max}" value="${value}"
@@ -1851,21 +1904,23 @@ function renderParameters() {
                         <span>${max}${param.unit}</span>
                     </div>
                 </div>
-                ${(!isInputPhase
-                    ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
-                    : (teamData?.confirmed
-                        ? '<div class="param-notice">Решение подтверждено — изменения заблокированы</div>'
-                        : (blockedByMoveLimit
-                            ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
-                            : (movesUsed.length > 0
-                                ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
-                                : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))))}
+                ${!userIsCaptain
+                    ? '<div class="param-notice">Только капитан может изменять</div>'
+                    : (!isInputPhase
+                        ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
+                        : (teamLockedByConfirmations
+                            ? '<div class="param-notice">Все участники подтвердили — изменения заблокированы</div>'
+                            : (blockedByMoveLimit
+                                ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
+                                : (movesUsed.length > 0
+                                    ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
+                                    : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))))}
             `;
             
-            grid.appendChild(card);
+            body.appendChild(card);
             
-            // Обработчик слайдера (любой участник в фазах ввода)
-            if (!isLocked && isInputPhase && !teamData?.confirmed) {
+            // Обработчик слайдера (только для капитана)
+            if (userIsCaptain && !isLocked && isInputPhase && !teamLockedByConfirmations) {
                 const slider = card.querySelector(`#slider-${param.id}`);
                 slider.addEventListener('input', (e) => {
                     const newValue = parseInt(e.target.value);
@@ -1898,7 +1953,14 @@ function renderParameters() {
                     // Обновляем данные команды
                     if (teamDataNow) {
                         const teamParamData = teamDataNow.parameters.find(p => p.id === param.id);
+                        const prev = teamParamData ? teamParamData.value : undefined;
                         if (teamParamData) teamParamData.value = newValue;
+
+                        // Если значение реально изменилось — увеличиваем ревизию решения для текущей фазы,
+                        // чтобы всем участникам нужно было подтвердить заново (без массовых записей participants/*)
+                        if (typeof prev === 'number' && prev !== newValue) {
+                            bumpTeamPhaseRevision(state.user.team.id, currentPhase);
+                        }
                         
                         // Синхронизируем с Firebase (с debounce)
                         debounceSaveTeam(state.user.team.id);
@@ -2180,7 +2242,6 @@ function updateConfirmButton() {
     const statusEl = $('#confirm-status');
     if (!btn || !statusEl) return;
     
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
     const currentPhase = state.session.phase;
     
     // Проверяем, активна ли фаза ввода (1 или 4)
@@ -2192,45 +2253,74 @@ function updateConfirmButton() {
         return;
     }
     
-    if (teamData?.confirmed) {
+    const teamId = state.user.team?.id;
+    if (!teamId) {
         btn.disabled = true;
-        statusEl.textContent = 'Решение команды подтверждено ✓';
+        statusEl.textContent = 'Команда не назначена';
         return;
     }
-    
-    // В фазах ввода капитан может подтвердить как "статус-кво", так и изменения.
-    // (это соответствует сценарию: в фазе 1 можно подтвердить решение даже без правок)
+
+    const me = getParticipantById(state.user.id);
+    const isConfirmed = isParticipantConfirmedForCurrentDecision(me, teamId, currentPhase);
+    const isStale = isParticipantConfirmationStale(me, teamId, currentPhase);
+
+    if (isConfirmed) {
+        btn.disabled = true;
+        statusEl.textContent = 'Вы подтвердили решение ✓';
+        return;
+    }
+
     btn.disabled = false;
-    
-    // Небольшая подсказка, если изменений нет
-    const allParams = getAllParameters();
-    const hasChanges = teamData?.parameters?.some(p => {
-        const defaultParam = allParams.find(dp => dp.id === p.id);
-        return defaultParam && p.value !== defaultParam.default;
-    }) ?? false;
-    statusEl.textContent = hasChanges ? '' : 'Можно подтвердить статус-кво или внесите изменения';
+    statusEl.textContent = isStale
+        ? 'Решение изменилось — подтвердите заново'
+        : 'Нажмите, чтобы подтвердить своё решение';
 }
 
 function confirmDecision() {
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
-    if (teamData) {
-        teamData.confirmed = true;
-        
-        // Сохраняем в Firebase
-        saveTeamToFirebase(state.user.team.id);
+    const currentPhase = state.session.phase;
+    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
+    if (!isInputPhase) {
+        showNotification('Подтверждение доступно только в фазах 1 и 4', 'warning');
+        return;
     }
-    
-    $('#confirm-status').textContent = 'Решение команды подтверждено ✓';
+
+    const teamId = state.user.team?.id;
+    if (!teamId) {
+        showNotification('Команда не назначена', 'error');
+        return;
+    }
+
+    const teamData = getTeamData(teamId);
+    const me = getParticipantById(state.user.id);
+    if (!me) return;
+
+    const teamRev = getTeamPhaseRevision(teamId, currentPhase);
+    const snapshot = JSON.parse(JSON.stringify(teamData.parameters || []));
+    const at = new Date().toISOString();
+
+    me.confirmations[String(currentPhase)] = {
+        confirmed: true,
+        revision: teamRev,
+        at,
+        parameters: snapshot
+    };
+    // legacy флаги для совместимости/быстрого UI
+    me.confirmed = true;
+    me.confirmedPhase = currentPhase;
+
+    saveParticipantToFirebase(me);
+
+    $('#confirm-status').textContent = 'Вы подтвердили решение ✓';
     $('#confirm-btn').disabled = true;
-    
-    // После подтверждения блокируем ползунки (до смены фазы)
+
+    // Если пользователь капитан — возможно, решение теперь "закрыто" (все подтвердили)
     renderParameters();
-    
-    addToHistory(`Подтвердили решение за ${state.user.team.name}`);
-    addToLog('confirm', `${state.user.team.name} подтвердила решение (капитан: ${state.user.name})`);
-    showNotification('Решение команды отправлено!', 'success');
-    
-    console.log(`✅ Команда ${state.user.team.id} подтвердила решение в фазе ${state.session.phase}`);
+
+    addToHistory('Подтвердили своё решение');
+    addToLog('confirm', `${state.user.name} подтвердил(а) решение (${state.user.team?.name || teamId})`);
+    showNotification('Ваше решение подтверждено!', 'success');
+
+    console.log(`✅ Участник ${state.user.id} подтвердил решение команды ${teamId} в фазе ${currentPhase} (rev=${teamRev})`);
 }
 
 // Панель истории
@@ -2289,7 +2379,7 @@ function initModeratorScreen() {
     renderParamsMatrix();
     renderAvgParams();
     initCharts();
-    
+
     // Подстраховка: прокрутить к матрице, если пользователь "видит только участников"
     setTimeout(() => {
         const panel = $('#panel-matrix');
@@ -2535,16 +2625,28 @@ function applyPhaseLogic(phase) {
     
     console.log(`⚙️ Применяю логику фазы ${phase}, ввод активен: ${isInputPhase}`);
     
-    // Сбрасываем подтверждения команд при начале нового раунда ввода
-    if (phase === 4) {
+    // В начале фазы ввода сбрасываем legacy-флаг команды и обнуляем ревизию решения для этой фазы
+    if (isInputPhase) {
         Object.keys(state.teamsData).forEach(teamId => {
-            state.teamsData[teamId].confirmed = false;
+            const td = state.teamsData[teamId];
+            if (!td) return;
+            td.confirmed = false;
+            if (!td.phaseRevisions || typeof td.phaseRevisions !== 'object') td.phaseRevisions = {};
+            td.phaseRevisions[String(phase)] = 0;
         });
-        console.log('🔄 Сброшены подтверждения команд для Раунда 2');
+        console.log('🔄 Сброшены ревизии решений команд для фазы ввода', phase);
     }
     
-    // Блокировки управляются в renderParameters(); тут только обновляем видимость кнопки/статуса
+    // Блокируем/разблокируем ползунки (только для участников)
     if (!state.user.isModerator) {
+        const sliders = $$('.param-card .slider');
+        sliders.forEach(slider => {
+            if (!isCaptain(state.user.id)) {
+                slider.disabled = true; // Не капитан — всегда заблокирован
+            } else {
+                slider.disabled = !isInputPhase; // Капитан — только в раундах ввода
+            }
+        });
         
         // Визуально показываем статус ползунков
         $$('.param-card').forEach(card => {
@@ -2581,6 +2683,13 @@ function getPhaseStatusMessage(phase) {
         case 5: return '🏁 Итоги: Игра завершена';
         default: return '';
     }
+}
+
+function getLatestDecisionPhase(phase) {
+    const p = Number(phase);
+    if (p >= 5) return 4;
+    if (p === 2 || p === 3) return 1;
+    return p;
 }
 
 // Обновление баннера события для участника
@@ -2620,21 +2729,27 @@ function renderParticipantsList() {
     }
     
     const activeTeams = getActiveTeams();
+    const decisionPhase = getLatestDecisionPhase(state.session.phase);
     
     let html = '';
     activeTeams.forEach(team => {
         const teamMembers = getTeamMembers(team.id);
         const teamData = getTeamData(team.id);
+        const stats = getTeamConfirmationStats(team.id, decisionPhase);
         
         html += `<div class="team-group" style="border-left: 3px solid ${team.color}; margin-bottom: 1rem; padding-left: 0.75rem;">`;
         html += `<div class="team-group-header" style="font-size: 0.75rem; font-weight: 600; color: ${team.color}; margin-bottom: 0.5rem;">
-            ${team.name} (${teamMembers.length}) ${teamData.confirmed ? '✓' : ''}
+            ${team.name} (${teamMembers.length}) • подтверждено: ${stats.confirmed}/${stats.total}
         </div>`;
         
         teamMembers.forEach(p => {
             const isCaptainMember = p.id === teamData.captainId;
             const captainBadge = isCaptainMember ? '👑' : '';
-            const roleBadge = p.gameRole ? `<span class="participant-role">${p.gameRole.icon}</span>` : '';
+            const roleBadge = p.gameRole ? `<span class="participant-role" title="${p.gameRole.name}">${p.gameRole.icon}</span>` : '';
+            const ok = isParticipantConfirmedForCurrentDecision(p, team.id, decisionPhase);
+            const stale = isParticipantConfirmationStale(p, team.id, decisionPhase);
+            const statusMark = ok ? '✓' : (stale ? '↻' : '○');
+            const statusText = ok ? 'Подтвердил(а)' : (stale ? 'Нужно подтвердить заново' : 'Не подтвердил(а)');
             
             html += `
                 <div class="participant-item" data-id="${p.id}">
@@ -2642,7 +2757,7 @@ function renderParticipantsList() {
                     <div class="participant-info">
                         <div class="participant-name">${captainBadge} ${roleBadge} ${p.name} ${p.isBot ? '🤖' : ''}</div>
                         <div class="participant-status">
-                            ${isCaptainMember ? 'Капитан' : 'Участник'}
+                            ${isCaptainMember ? 'Капитан' : 'Участник'} • ${statusMark} ${statusText}
                         </div>
                     </div>
                 </div>
@@ -2682,7 +2797,11 @@ function addParticipant(name, isBot = false, values = null, realRole = null) {
         realRole: assignedRealRole,
         gameRole: assignedGameRole,
         team: assignedTeam,
-        isCaptain: false
+        isCaptain: false,
+        // Персональные подтверждения решений (по фазам)
+        confirmed: false,
+        confirmedPhase: null,
+        confirmations: {}
     };
     
     state.participants.push(participant);
@@ -2707,19 +2826,20 @@ function renderParamsMatrix() {
     const matrix = $('#params-matrix');
     if (!matrix) return;
     const activeTeams = getActiveTeams();
+    const decisionPhase = getLatestDecisionPhase(state.session.phase);
     
     if (activeTeams.length === 0) {
         // Если участники есть, но команд нет — значит у участников не назначены команды (данные битые)
         if (state.participants.length > 0) {
             matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Участники есть, но команды не определены (проверьте, что у участника есть поле team.id)</td></tr>';
         } else {
-        matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Нет активных команд</td></tr>';
+            matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Нет активных команд</td></tr>';
         }
         return;
     }
     
     // Заголовки: категории параметров
-    let html = '<thead><tr><th>Команда</th>';
+    let html = '<thead><tr><th>Команда / участник</th>';
     CONFIG.parameterCategories.forEach(cat => {
         html += `<th style="color: ${cat.color}" title="${cat.name}">${cat.icon}</th>`;
     });
@@ -2729,35 +2849,87 @@ function renderParamsMatrix() {
         const teamData = getTeamData(team.id);
         const teamMembers = getTeamMembers(team.id);
         const captain = teamMembers.find(m => m.id === teamData.captainId);
-        const igs = calculateIGS(teamData.parameters);
+        // Строки участников (показываем их личные подтверждённые снимки)
+        teamMembers.forEach(p => {
+            const isCaptainMember = p.id === teamData.captainId;
+            const captainBadge = isCaptainMember ? '👑 ' : '';
+            const roleBadge = p.gameRole ? `<span title="${p.gameRole.name}">${p.gameRole.icon}</span> ` : '';
+            const ok = isParticipantConfirmedForCurrentDecision(p, team.id, decisionPhase);
+            const stale = isParticipantConfirmationStale(p, team.id, decisionPhase);
+            const statusMark = ok ? '✓' : (stale ? '↻' : '○');
+            
+            const rec = getParticipantConfirmation(p, decisionPhase);
+            const params = (rec?.confirmed && Array.isArray(rec.parameters)) ? rec.parameters : null;
+            const igs = params ? calculateIGS(params) : null;
+            
+            html += `<tr style="border-left: 4px solid ${team.color}">`;
+            html += `<td class="participant-name-cell">
+                <div><strong>${team.name}</strong> — ${captainBadge}${roleBadge}${p.name}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted)">
+                    фаза ${decisionPhase} • ${isCaptainMember ? 'капитан' : 'участник'}
+                </div>
+            </td>`;
+            
+            CONFIG.parameterCategories.forEach(cat => {
+                if (!igs) {
+                    html += `<td title="${cat.name}: нет подтверждённого решения">—</td>`;
+                    return;
+                }
+                const catValue = igs.components[cat.id];
+                const colorClass = catValue <= 33 ? 'low' : (catValue <= 66 ? 'mid' : 'high');
+                html += `<td class="${colorClass}" title="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
+            });
+            
+            if (!igs) {
+                html += `<td>—</td>`;
+            } else {
+                const igsClass = getIGSClass(igs.total);
+                html += `<td class="${igsClass}" style="font-weight: bold">${igs.total.toFixed(1)}</td>`;
+            }
+            
+            html += `<td>${statusMark}</td>`;
+            html += `</tr>`;
+        });
         
-        // Роли команды (по реальным ролям участников)
-        const roleIcons = [...new Set(teamMembers.map(m => CONFIG.realRoles[m.realRole]?.icon).filter(Boolean))].join(' ');
+        // Агрегированная строка по команде (среднее по подтверждённым актуальным снимкам; иначе текущие параметры команды)
+        const eligible = teamMembers
+            .filter(p => !p.isBot)
+            .filter(p => isParticipantConfirmedForCurrentDecision(p, team.id, decisionPhase))
+            .map(p => getParticipantConfirmation(p, decisionPhase)?.parameters)
+            .filter(arr => Array.isArray(arr));
         
-        html += `<tr style="border-left: 4px solid ${team.color}">`;
+        let aggParams = null;
+        if (eligible.length > 0) {
+            const allParams = getAllParameters().map(x => x.id);
+            aggParams = allParams.map(id => {
+                const vals = eligible.map(ps => ps.find(x => x.id === id)?.value).filter(v => typeof v === 'number');
+                const avg = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) : (teamData.parameters.find(p => p.id === id)?.value ?? 0);
+                return { id, value: avg };
+            });
+        } else {
+            aggParams = teamData.parameters;
+        }
+        
+        const aggIGS = calculateIGS(aggParams);
+        const stats = getTeamConfirmationStats(team.id, decisionPhase);
+        
+        html += `<tr class="team-aggregate-row" style="border-left: 4px solid ${team.color}">`;
         html += `<td class="participant-name-cell">
-            <div><strong>${team.name}</strong></div>
+            <div><strong>${team.name}</strong> — итог команды</div>
             <div style="font-size: 0.75rem; color: var(--text-muted)">
-                ${teamMembers.length} уч. | 👑 ${captain?.name || '—'}${roleIcons ? ` | ${roleIcons}` : ''}
+                ${teamMembers.length} уч. | 👑 ${captain?.name || '—'} • подтверждено: ${stats.confirmed}/${stats.total}
             </div>
         </td>`;
         
-        // Показываем значение каждой категории
         CONFIG.parameterCategories.forEach(cat => {
-            const catValue = igs.components[cat.id];
+            const catValue = aggIGS.components[cat.id];
             const colorClass = catValue <= 33 ? 'low' : (catValue <= 66 ? 'mid' : 'high');
             html += `<td class="${colorClass}" title="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
         });
         
-        // ИГС
-        const igsClass = getIGSClass(igs.total);
-        html += `<td class="${igsClass}" style="font-weight: bold">${igs.total.toFixed(1)}</td>`;
-        
-        const statusClass = teamData.confirmed ? 'confirmed' : '';
-        const statusText = teamData.confirmed ? '✓' : '○';
-        html += `<td class="${statusClass}">${statusText}</td>`;
-        
-        html += '</tr>';
+        html += `<td class="${getIGSClass(aggIGS.total)}" style="font-weight: bold">${aggIGS.total.toFixed(1)}</td>`;
+        html += `<td>${stats.confirmed}/${stats.total}</td>`;
+        html += `</tr>`;
     });
     
     // Строка консенсуса (среднее)
@@ -2860,9 +3032,11 @@ function updateMetrics() {
         dDesc.textContent = `${getConflictGradeText(D)} • ${pct.toFixed(0)}% (норма)`;
     }
     
-    // Показатель S (синхронизация) - % подтвердивших команд
-    const confirmedTeams = activeTeams.filter(team => getTeamData(team.id).confirmed).length;
-    const S = activeTeams.length > 0 ? Math.round((confirmedTeams / activeTeams.length) * 100) : 0;
+    // Показатель S (синхронизация) - % подтвердивших участников (актуальное решение последнего раунда)
+    const decisionPhase = getLatestDecisionPhase(state.session.phase);
+    const participants = state.participants.filter(p => !p.isBot && p.team?.id);
+    const confirmedParticipants = participants.filter(p => isParticipantConfirmedForCurrentDecision(p, p.team.id, decisionPhase)).length;
+    const S = participants.length > 0 ? Math.round((confirmedParticipants / participants.length) * 100) : 0;
     $('#metric-s').textContent = `${S}%`;
     
     // ИГС консенсуса
@@ -3059,10 +3233,22 @@ function initModeratorActions() {
         Object.keys(state.teamsData).forEach(teamId => {
             const teamData = state.teamsData[teamId];
             teamData.confirmed = false;
+            if (!teamData.phaseRevisions || typeof teamData.phaseRevisions !== 'object') teamData.phaseRevisions = {};
+            teamData.phaseRevisions['1'] = 0;
+            teamData.phaseRevisions['4'] = 0;
             teamData.parameters.forEach(p => {
                 const defaultParam = allParams.find(dp => dp.id === p.id);
                 p.value = defaultParam ? defaultParam.default : 50;
             });
+            saveTeamToFirebase(teamId);
+        });
+        // Сбрасываем подтверждения участников
+        state.participants.forEach(p => {
+            ensureParticipantMeta(p);
+            p.confirmed = false;
+            p.confirmedPhase = null;
+            p.confirmations = {};
+            saveParticipantToFirebase(p);
         });
         renderParamsMatrix();
         renderAvgParams();
@@ -3082,7 +3268,19 @@ function initModeratorActions() {
     
     // Принять за всех
     $('#force-confirm-btn').addEventListener('click', () => {
-        state.participants.forEach(p => p.confirmed = true);
+        const decisionPhase = getLatestDecisionPhase(state.session.phase);
+        state.participants.forEach(p => {
+            ensureParticipantMeta(p);
+            if (!p.team?.id) return;
+            const teamId = p.team.id;
+            const teamData = getTeamData(teamId);
+            const teamRev = getTeamPhaseRevision(teamId, decisionPhase);
+            const snapshot = JSON.parse(JSON.stringify(teamData.parameters || []));
+            p.confirmations[String(decisionPhase)] = { confirmed: true, revision: teamRev, at: new Date().toISOString(), parameters: snapshot };
+            p.confirmed = true;
+            p.confirmedPhase = decisionPhase;
+            saveParticipantToFirebase(p);
+        });
         renderParticipantsList();
         updateMetrics();
         addToLog('action', 'Решения приняты за всех участников');
@@ -3456,14 +3654,14 @@ function exportData(format) {
 function generateCSV() {
     // Экспорт по командам с ИГС
     const categories = CONFIG.parameterCategories.map(c => c.name);
-    let csv = 'Команда,' + categories.join(',') + ',ИГС,Подтверждено\n';
+    let csv = 'Команда,' + categories.join(',') + ',ИГС,Подтверждено(участники)\n';
     
     const activeTeams = getActiveTeams();
     activeTeams.forEach(team => {
         const igs = calculateTeamIGS(team.id);
-        const teamData = getTeamData(team.id);
         const values = CONFIG.parameterCategories.map(cat => igs.components[cat.id].toFixed(1));
-        csv += `${team.name},${values.join(',')},${igs.total.toFixed(1)},${teamData.confirmed ? 'Да' : 'Нет'}\n`;
+        const stats = getTeamConfirmationStats(team.id, getLatestDecisionPhase(state.session.phase));
+        csv += `${team.name},${values.join(',')},${igs.total.toFixed(1)},${stats.confirmed}/${stats.total}\n`;
     });
     
     return csv;
@@ -3475,18 +3673,18 @@ function generateXLSX(data) {
     
     // Лист с командами и ИГС
     const categories = CONFIG.parameterCategories.map(c => c.name);
-    const wsData = [['Команда', ...categories, 'ИГС', 'Конфликт D', 'Подтверждено']];
+    const wsData = [['Команда', ...categories, 'ИГС', 'Конфликт D', 'Подтверждено(участники)']];
     
     activeTeams.forEach(team => {
         const igs = calculateTeamIGS(team.id);
-        const teamData = getTeamData(team.id);
         const row = [team.name];
         CONFIG.parameterCategories.forEach(cat => {
             row.push(igs.components[cat.id].toFixed(1));
         });
         row.push(igs.total.toFixed(1));
         row.push(igs.components.D.toFixed(1));
-        row.push(teamData.confirmed ? 'Да' : 'Нет');
+        const stats = getTeamConfirmationStats(team.id, getLatestDecisionPhase(state.session.phase));
+        row.push(`${stats.confirmed}/${stats.total}`);
         wsData.push(row);
     });
     
@@ -3562,9 +3760,8 @@ function generatePDF(data) {
     let y = 95;
     activeTeams.forEach(team => {
         const igs = calculateTeamIGS(team.id);
-        const teamData = getTeamData(team.id);
-        const status = teamData.confirmed ? '✓' : '○';
-        doc.text(`${status} ${team.name}: ИГС = ${igs.total.toFixed(1)}`, 25, y);
+        const stats = getTeamConfirmationStats(team.id, getLatestDecisionPhase(state.session.phase));
+        doc.text(`${team.name}: ИГС = ${igs.total.toFixed(1)} (подтверждено: ${stats.confirmed}/${stats.total})`, 25, y);
         y += 6;
     });
     
