@@ -2068,7 +2068,6 @@ function initLoginScreen() {
             const tab = btn.dataset.tab;
             $('#join-form').classList.toggle('hidden', tab !== 'join');
             $('#create-form').classList.toggle('hidden', tab !== 'create');
-            $('#display-form').classList.toggle('hidden', tab !== 'display');
         });
     });
     
@@ -2139,8 +2138,15 @@ function initLoginScreen() {
             });
     });
     
-    // Демо-режим
-    $('#demo-btn').addEventListener('click', startDemo);
+    // Демонстрация: раскрыть/скрыть быстрый ввод кода
+    $('#display-btn')?.addEventListener('click', () => {
+        const box = $('#display-quick-form');
+        if (!box) return;
+        box.classList.toggle('hidden');
+        if (!box.classList.contains('hidden')) {
+            $('#display-session-code')?.focus?.();
+        }
+    });
 
     // Режим демонстрации (по коду сессии)
     $('#display-join-btn')?.addEventListener('click', () => {
@@ -2437,25 +2443,7 @@ async function createSession(sessionName, moderatorName, customCode = '', projec
     addToLog('system', `Проект "${sessionName}" | ${scaleInfo.icon} ${scaleInfo.name} | ${budgetInfo.icon} ${budgetInfo.name}`);
 }
 
-function startDemo() {
-    createSession('Демо: Благоустройство парка', 'Модератор');
-    
-    // Добавляем демо-участников
-    const demoParticipants = [
-        { name: 'Анна К.', values: [45, 70, 55, 60, 30, 40] },
-        { name: 'Игорь М.', values: [60, 50, 70, 45, 65, 55] },
-        { name: 'Елена С.', values: [55, 80, 40, 70, 25, 35] },
-        { name: 'Дмитрий В.', values: [70, 45, 60, 50, 55, 60] }
-    ];
-    
-    demoParticipants.forEach((p, index) => {
-        setTimeout(() => {
-            addParticipant(p.name, false, p.values);
-        }, (index + 1) * 500);
-    });
-    
-    showNotification('Демо-режим активирован', 'info');
-}
+// Демо-режим удалён по требованию
 
 // =====================================================
 // ЭКРАН УЧАСТНИКА
