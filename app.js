@@ -22,6 +22,34 @@ const FIREBASE_CONFIG = {
 let firebaseApp = null;
 let firebaseDB = null;
 let firebaseEnabled = false;
+let firebaseConnected = null; // true/false/null
+
+function isFirebasePermissionDenied(error) {
+    const msg = String(error?.code || error?.message || error?.name || '').toLowerCase();
+    return msg.includes('permission_denied') || msg.includes('permission denied');
+}
+
+function withTimeout(promise, ms, label = 'operation') {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`Timeout: ${label}`)), ms);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+}
+
+function handleFirebaseFatalError(error, context = '') {
+    console.error('❌ Firebase fatal error', context, error);
+    
+    if (isFirebasePermissionDenied(error)) {
+        firebaseEnabled = false;
+        showNotification(
+            'Нет прав доступа к Firebase (permission_denied). Онлайн-синхронизация отключена. ' +
+            'Откройте модератора и участника в разных вкладках на одном устройстве (локальный режим) ' +
+            'или настройте Firebase Rules / доступ в консоли.',
+            'error'
+        );
+    }
+}
 
 // =====================================================
 // ЛОКАЛЬНАЯ СИНХРОНИЗАЦИЯ (fallback без Firebase)
@@ -246,9 +274,31 @@ function initFirebase() {
     
     try {
         firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
+        
+        // В некоторых сетях (особенно учебных Wi‑Fi) WebSocket для RTDB блокируется,
+        // и тогда подключения "висят" без явной ошибки. Принудительный long-polling
+        // обычно решает проблему.
+        try {
+            const urlParams = new URLSearchParams(window.location.search);
+            const forceLP = urlParams.get('lp') === '1' || urlParams.get('longpoll') === '1';
+            if (forceLP && firebase?.database?.INTERNAL?.forceLongPolling) {
+                firebase.database.INTERNAL.forceLongPolling();
+                console.log('🌐 Firebase: forceLongPolling включен (lp=1)');
+            }
+        } catch (_) {}
+        
         firebaseDB = firebase.database();
         firebaseEnabled = true;
         console.log('✅ Firebase подключен');
+
+        // Отслеживаем состояние соединения с Firebase (помогает при "вечном подключении" без ошибок)
+        try {
+            firebaseDB.ref('.info/connected').on('value', (snap) => {
+                firebaseConnected = !!snap.val();
+                console.log('🌐 Firebase connected:', firebaseConnected);
+            });
+        } catch (_) {}
+
         return true;
     } catch (error) {
         console.error('❌ Ошибка Firebase:', error);
@@ -282,7 +332,7 @@ function subscribeToSession(sessionCode) {
         if (sessionData) {
             syncSessionDataFromFirebase(sessionData);
         }
-    });
+    }, (error) => handleFirebaseFatalError(error, 'subscribe session'));
     
     // Загружаем всех существующих участников (для модератора)
     if (state.user.isModerator) {
@@ -343,7 +393,7 @@ function subscribeToSession(sessionCode) {
         } else if (participant && state.participants.find(p => p.id === participant.id)) {
             console.log('⚠️ Участник уже есть в списке:', participant.name);
         }
-    });
+    }, (error) => handleFirebaseFatalError(error, 'subscribe participants'));
     
     // Слушаем изменения команд
     sessionRef.child('teams').on('value', (snapshot) => {
@@ -373,7 +423,7 @@ function subscribeToSession(sessionCode) {
                 updateIGSDisplay();
             }
         }
-    });
+    }, (error) => handleFirebaseFatalError(error, 'subscribe teams'));
     
     // Слушаем изменения фазы
     sessionRef.child('phase').on('value', (snapshot) => {
@@ -398,7 +448,7 @@ function subscribeToSession(sessionCode) {
             
             addToLog('phase', `Переход к фазе ${phase}: ${CONFIG.phases[phase]?.name}`);
         }
-    });
+    }, (error) => handleFirebaseFatalError(error, 'subscribe phase'));
 
     // Сообщения модератора
     sessionRef.child('broadcasts').limitToLast(20).on('child_added', (snapshot) => {
@@ -407,7 +457,7 @@ function subscribeToSession(sessionCode) {
         // Не показываем самому себе, если это модератор в той же вкладке
         if (payload.from && payload.from === state.user.name && state.user.isModerator) return;
         showBroadcast(payload.message, payload);
-    });
+    }, (error) => handleFirebaseFatalError(error, 'subscribe broadcasts'));
 
     // События модератора (интермиссия и т.п.)
     sessionRef.child('events').limitToLast(20).on('child_added', (snapshot) => {
@@ -421,7 +471,7 @@ function subscribeToSession(sessionCode) {
             updateConfirmButton();
             showNotification(`Событие: ${event.name || 'изменение условий'}`, 'warning');
         }
-    });
+    }, (error) => handleFirebaseFatalError(error, 'subscribe events'));
     
     console.log(`📡 Подписка на сессию ${sessionCode}`);
 }
@@ -438,7 +488,7 @@ function syncSessionDataFromFirebase(sessionData) {
     state.session = { ...state.session, ...rest, createdAt };
     
     // Обновляем заголовки/баннеры (фаза уже в state.session.phase)
-    updatePhaseUI();
+        updatePhaseUI();
 }
 
 // Сохранение сессии в Firebase
@@ -447,13 +497,13 @@ function saveSessionToFirebase() {
     if (!firebaseEnabled) {
         if (!state.session.code) return;
         const existing = localReadSession(state.session.code) || {};
-        const data = {
-            session: {
-                name: state.session.name,
-                isPaused: state.session.isPaused,
-                projectScale: state.session.projectScale,
-                budgetLevel: state.session.budgetLevel,
-                budgetTotal: state.session.budgetTotal,
+    const data = {
+        session: {
+            name: state.session.name,
+            isPaused: state.session.isPaused,
+            projectScale: state.session.projectScale,
+            budgetLevel: state.session.budgetLevel,
+            budgetTotal: state.session.budgetTotal,
                 budgetUsed: state.session.budgetUsed,
                 createdAt: state.session.createdAt ? state.session.createdAt.toISOString() : null
             },
@@ -493,6 +543,9 @@ function saveSessionToFirebase() {
         console.log('✅ Сессия сохранена в Firebase');
     }).catch((error) => {
         console.error('❌ Ошибка сохранения сессии:', error);
+        handleFirebaseFatalError(error, 'save session');
+        // fallback: локально
+        if (!firebaseEnabled) saveSessionToFirebase();
     });
 }
 
@@ -526,6 +579,8 @@ function saveParticipantToFirebase(participant) {
         console.log('✅ Участник сохранён в Firebase:', participant.name);
     }).catch((error) => {
         console.error('❌ Ошибка сохранения участника:', error);
+        handleFirebaseFatalError(error, 'save participant');
+        if (!firebaseEnabled) saveParticipantToFirebase(participant);
     });
 }
 
@@ -561,6 +616,8 @@ function saveTeamToFirebase(teamId) {
         console.log(`✅ Команда ${teamId} сохранена в Firebase`);
     }).catch((error) => {
         console.error(`❌ Ошибка сохранения команды ${teamId}:`, error);
+        handleFirebaseFatalError(error, 'save team');
+        if (!firebaseEnabled) saveTeamToFirebase(teamId);
     });
 }
 
@@ -591,6 +648,8 @@ function updatePhaseInFirebase(phase) {
         console.log('✅ Фаза отправлена в Firebase');
     }).catch((error) => {
         console.error('❌ Ошибка отправки фазы:', error);
+        handleFirebaseFatalError(error, 'update phase');
+        if (!firebaseEnabled) updatePhaseInFirebase(phase);
     });
 }
 
@@ -1411,7 +1470,7 @@ function joinSession(code, name, realRole) {
     // Если Firebase включен - сначала проверяем существование сессии
     if (firebaseEnabled) {
         const sessionRef = firebaseDB.ref(`sessions/${code}`);
-        return sessionRef.once('value').then((snapshot) => {
+        return withTimeout(sessionRef.once('value'), 7000, 'Firebase joinSession').then((snapshot) => {
             const sessionData = snapshot.val();
             
             if (!sessionData) {
@@ -1437,6 +1496,30 @@ function joinSession(code, name, realRole) {
             return true;
         }).catch((error) => {
             console.error('❌ Ошибка Firebase:', error);
+            handleFirebaseFatalError(error, 'join session');
+            
+            if (String(error?.message || '').toLowerCase().includes('timeout')) {
+                const hint = (firebaseConnected === false)
+                    ? 'Похоже, нет соединения с Firebase (.info/connected=false). Проверьте сеть/блокировки.'
+                    : 'Похоже, Firebase не отвечает. Проверьте сеть (часто блокируют домены firebaseio.com), попробуйте другой Wi‑Fi/браузер.';
+                showNotification(`Подключение к Firebase зависло. ${hint}`, 'error');
+            }
+            
+            if (!firebaseEnabled) {
+                // fallback to local
+                initLocalSync();
+                const localSession = localReadSession(code);
+                if (localSession) {
+                    if (localSession.session) {
+                        const createdAt = localSession.session.createdAt ? new Date(localSession.session.createdAt) : null;
+                        state.session = { ...state.session, ...localSession.session, createdAt };
+                    }
+                    state.session.code = code;
+                    state.session.phase = typeof localSession.phase === 'number' ? localSession.phase : (state.session.phase || 0);
+                    completeJoinSession(code, name, realRole);
+                    return true;
+                }
+            }
             showNotification('Ошибка подключения. Попробуйте снова.', 'error');
             throw error;
         });
@@ -1746,12 +1829,19 @@ function renderParameters() {
             const card = document.createElement('div');
             card.className = `param-card ${isLocked ? 'locked' : ''} ${!userIsCaptain ? 'readonly' : ''}`;
             card.style.borderLeftColor = category.color;
+            
+            const w = CONFIG.igsWeights?.[category.id] ?? 0;
+            const impactPer10 = w * param.weight * 10;
+            const impactText = impactPer10 === 0
+                ? ''
+                : `Влияние на ИГС: ${impactPer10 > 0 ? '+' : ''}${impactPer10.toFixed(2)} за +10`;
             card.innerHTML = `
                 <div class="param-header">
                     <span class="param-name">${param.name}</span>
                     <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
                 </div>
                 <p class="param-desc">${param.desc}</p>
+                ${impactText ? `<div class="input-hint">${impactText}</div>` : ''}
                 <div class="param-slider">
                     <input type="range" class="slider" id="slider-${param.id}" 
                            min="${min}" max="${max}" value="${value}"
@@ -1888,6 +1978,36 @@ function getIGSClass(value) {
     return 'igs-low';
 }
 
+function normalizeIGSPercent(igsValue) {
+    // В текущей модели практический максимум ≈ 80 (0.20+0.15+0.15+0.15+0.15 = 0.80)
+    const pct = (Number(igsValue) / 80) * 100;
+    return Math.max(0, Math.min(100, pct));
+}
+
+function getIGSGradeText(igsValue) {
+    const v = Number(igsValue);
+    if (v <= 20) return 'Плохо';
+    if (v <= 40) return 'Слабо';
+    if (v <= 55) return 'Нормально';
+    if (v <= 70) return 'Хорошо';
+    return 'Отлично';
+}
+
+function normalizeConflictPercent(dValue) {
+    // В текущей реализации D обычно 0..50. Нормируем к 0..100 умножением на 2.
+    const pct = Number(dValue) * 2;
+    return Math.max(0, Math.min(100, pct));
+}
+
+function getConflictGradeText(dValue) {
+    const v = Number(dValue);
+    if (v <= 8) return 'Отлично';
+    if (v <= 18) return 'Хорошо';
+    if (v <= 30) return 'Средне';
+    if (v <= 40) return 'Плохо';
+    return 'Очень плохо';
+}
+
 // Расчёт использованного бюджета
 function calculateBudgetUsed(parameters) {
     let cost = 0;
@@ -1931,6 +2051,12 @@ function updateIGSHero() {
     
     // Класс цвета
     heroValue.className = 'igs-number ' + getIGSClass(igs.total);
+
+    const gradeEl = $('#igs-hero-grade');
+    if (gradeEl) {
+        const pct = normalizeIGSPercent(igs.total);
+        gradeEl.textContent = `${getIGSGradeText(igs.total)} • ${pct.toFixed(0)}% от максимума модели`;
+    }
     
     // Бюджет
     if (budgetDisplay) {
@@ -2180,7 +2306,7 @@ function initModeratorScreen() {
     renderParamsMatrix();
     renderAvgParams();
     initCharts();
-
+    
     // Подстраховка: прокрутить к матрице, если пользователь "видит только участников"
     setTimeout(() => {
         const panel = $('#panel-matrix');
@@ -2612,7 +2738,7 @@ function renderParamsMatrix() {
         if (state.participants.length > 0) {
             matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Участники есть, но команды не определены (проверьте, что у участника есть поле team.id)</td></tr>';
         } else {
-            matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Нет активных команд</td></tr>';
+        matrix.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 2rem;">Нет активных команд</td></tr>';
         }
         return;
     }
@@ -2743,12 +2869,21 @@ function updateMetrics() {
         $('#metric-s').textContent = '—';
         $('#consensus-value').textContent = '—';
         $('#consensus-fill').style.width = '0%';
+        const dDesc = $('#metric-d-desc');
+        const cDesc = $('#consensus-desc');
+        if (dDesc) dDesc.textContent = 'Расхождение команд';
+        if (cDesc) cDesc.textContent = '—';
         return;
     }
     
     // Показатель D (конфликт интересов)
     const D = calculateConflict();
     $('#metric-d').textContent = D.toFixed(1);
+    const dDesc = $('#metric-d-desc');
+    if (dDesc) {
+        const pct = normalizeConflictPercent(D);
+        dDesc.textContent = `${getConflictGradeText(D)} • ${pct.toFixed(0)}% (норма)`;
+    }
     
     // Показатель S (синхронизация) - % подтвердивших команд
     const confirmedTeams = activeTeams.filter(team => getTeamData(team.id).confirmed).length;
@@ -2760,6 +2895,11 @@ function updateMetrics() {
     const igsValue = avgIGS ? avgIGS.total : 0;
     $('#consensus-value').textContent = igsValue.toFixed(1);
     $('#consensus-fill').style.width = `${igsValue}%`;
+    const cDesc = $('#consensus-desc');
+    if (cDesc) {
+        const pct = normalizeIGSPercent(igsValue);
+        cDesc.textContent = `${getIGSGradeText(igsValue)} • ${pct.toFixed(0)}% от максимума модели`;
+    }
 }
 
 // Редактор событий
