@@ -482,7 +482,7 @@ function syncSessionDataFromFirebase(sessionData) {
 function saveSessionToFirebase() {
     // Локальный режим: сохраняем в localStorage и оповещаем вкладки
     if (!firebaseEnabled) {
-        if (!state.session.code) return;
+        if (!state.session.code) return Promise.resolve(false);
         const existing = localReadSession(state.session.code) || {};
         const data = {
             session: {
@@ -500,11 +500,11 @@ function saveSessionToFirebase() {
         };
         localWriteSession(state.session.code, data);
         localBroadcast({ type: 'session_update', code: state.session.code, data });
-        return;
+        return Promise.resolve(true);
     }
     if (!state.session.code) {
         console.log('⚠️ saveSessionToFirebase: нет кода сессии');
-        return;
+        return Promise.resolve(false);
     }
     
     const sessionRef = firebaseDB.ref(`sessions/${state.session.code}`);
@@ -526,10 +526,12 @@ function saveSessionToFirebase() {
     
     console.log('💾 Сохраняю сессию в Firebase:', data);
     
-    sessionRef.update(data).then(() => {
+    return sessionRef.update(data).then(() => {
         console.log('✅ Сессия сохранена в Firebase');
+        return true;
     }).catch((error) => {
         console.error('❌ Ошибка сохранения сессии:', error);
+        return false;
     });
 }
 
@@ -537,11 +539,11 @@ function saveSessionToFirebase() {
 function saveParticipantToFirebase(participant) {
     // Локальный режим
     if (!firebaseEnabled) {
-        if (!state.session.code) return;
+        if (!state.session.code) return Promise.resolve(false);
         const existing = localReadSession(state.session.code);
         if (!existing) {
             console.warn('⚠️ LocalSync: сессия не найдена для сохранения участника');
-            return;
+            return Promise.resolve(false);
         }
         existing.participants = existing.participants || {};
         existing.participants[participant.id] = participant;
@@ -549,20 +551,22 @@ function saveParticipantToFirebase(participant) {
         localBroadcast({ type: 'participants_child_added', code: state.session.code, participant });
         // Также шлём полный слепок (на случай позднего подключения вкладки)
         localBroadcast({ type: 'session_update', code: state.session.code, data: existing });
-        return;
+        return Promise.resolve(true);
     }
     if (!state.session.code) {
         console.log('⚠️ saveParticipantToFirebase: нет кода сессии');
-        return;
+        return Promise.resolve(false);
     }
     
     console.log('💾 Сохраняю участника в Firebase:', participant.name, 'ID:', participant.id);
     
     const participantRef = firebaseDB.ref(`sessions/${state.session.code}/participants/${participant.id}`);
-    participantRef.set(participant).then(() => {
+    return participantRef.set(participant).then(() => {
         console.log('✅ Участник сохранён в Firebase:', participant.name);
+        return true;
     }).catch((error) => {
         console.error('❌ Ошибка сохранения участника:', error);
+        return false;
     });
 }
 
@@ -570,21 +574,21 @@ function saveParticipantToFirebase(participant) {
 function saveTeamToFirebase(teamId) {
     // Локальный режим
     if (!firebaseEnabled) {
-        if (!state.session.code) return;
+        if (!state.session.code) return Promise.resolve(false);
         const existing = localReadSession(state.session.code);
         if (!existing) {
             console.warn('⚠️ LocalSync: сессия не найдена для сохранения команды');
-            return;
+            return Promise.resolve(false);
         }
         existing.teams = existing.teams || {};
         existing.teams[teamId] = state.teamsData[teamId];
         localWriteSession(state.session.code, existing);
         localBroadcast({ type: 'teams_update', code: state.session.code, teams: { [teamId]: existing.teams[teamId] } });
-        return;
+        return Promise.resolve(true);
     }
     if (!state.session.code) {
         console.log('⚠️ saveTeamToFirebase: нет кода сессии');
-        return;
+        return Promise.resolve(false);
     }
     
     const teamData = state.teamsData[teamId];
@@ -594,10 +598,12 @@ function saveTeamToFirebase(teamId) {
     });
     
     const teamRef = firebaseDB.ref(`sessions/${state.session.code}/teams/${teamId}`);
-    teamRef.set(teamData).then(() => {
+    return teamRef.set(teamData).then(() => {
         console.log(`✅ Команда ${teamId} сохранена в Firebase`);
+        return true;
     }).catch((error) => {
         console.error(`❌ Ошибка сохранения команды ${teamId}:`, error);
+        return false;
     });
 }
 
@@ -937,11 +943,20 @@ const state = {
         gameRole: null,      // Назначенная игровая роль
         team: null           // Назначенная команда
     },
+
+    // Черновик личного решения участника (локально в этой вкладке).
+    // В Firebase сохраняем только подтверждённые снимки: participant.confirmations[phase].
+    userDraft: {
+        phase: null,       // decisionPhase (1 или 4)
+        parameters: [],    // [{id, value}] — личные значения ползунков
+        movesPhase: null,  // текущая фаза, для лимита изменений
+        movesUsed: []      // список id параметров, которые уже трогали в этой фазе
+    },
     
     // Участники сессии
     participants: [],
     
-    // Данные команд (параметры хранятся на уровне команды, не участника)
+    // Данные команд (для состава команд/капитанов и как fallback, если нет подтверждённых личных решений)
     teamsData: {},  // { teamId: { parameters: [...], confirmed: false, captainId: null } }
     
     // Параметры
@@ -1140,6 +1155,31 @@ function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
 }
 
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function retry(fn, { retries = 5, delayMs = 350 } = {}) {
+    let lastErr = null;
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await fn();
+        } catch (e) {
+            lastErr = e;
+            await wait(delayMs);
+        }
+    }
+    throw lastErr;
+}
+
+function stddev(values) {
+    const xs = (values || []).filter(v => typeof v === 'number' && Number.isFinite(v));
+    if (xs.length <= 1) return 0;
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const variance = xs.reduce((a, x) => a + (x - mean) ** 2, 0) / xs.length;
+    return Math.sqrt(variance);
+}
+
 function getInitials(name) {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 }
@@ -1218,23 +1258,79 @@ function calculateIGS(parameters, conflictValue = null) {
     };
 }
 
-// Расчёт ИГС для команды
-function calculateTeamIGS(teamId) {
-    const teamData = getTeamData(teamId);
-    return calculateIGS(teamData.parameters);
+function getDecisionPhaseForUI(phase) {
+    return getLatestDecisionPhase(phase);
+}
+
+function getDefaultParameterVector() {
+    return getAllParameters().map(p => ({ id: p.id, value: p.default }));
+}
+
+function cloneParamVector(vec) {
+    return JSON.parse(JSON.stringify(Array.isArray(vec) ? vec : []));
+}
+
+function getTeamAggregateParameters(teamId, phase) {
+    const p = Number.isFinite(Number(phase)) ? Number(phase) : getDecisionPhaseForUI(state.session.phase);
+    const teamMembers = getTeamMembers(teamId).filter(x => !x.isBot);
+    const confirmed = teamMembers
+        .map(m => getParticipantConfirmation(m, p))
+        .filter(rec => rec?.confirmed && Array.isArray(rec.parameters) && rec.parameters.length > 0)
+        .map(rec => rec.parameters);
+
+    // Если подтверждений нет — fallback на командные параметры (как "базовый" вектор)
+    if (confirmed.length === 0) {
+        return getTeamData(teamId).parameters;
+    }
+
+    const all = getAllParameters();
+    return all.map(def => {
+        const vals = confirmed
+            .map(arr => arr.find(x => x.id === def.id)?.value)
+            .filter(v => typeof v === 'number' && Number.isFinite(v));
+        const avg = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) : def.default;
+        return { id: def.id, value: avg };
+    });
+}
+
+// Расчёт конфликта интересов D (0..50) как среднее стандартное отклонение компонент по командам
+function calculateConflict(phase = null) {
+    const p = phase === null ? getDecisionPhaseForUI(state.session.phase) : Number(phase);
+    const teams = getActiveTeams();
+    if (teams.length <= 1) return 0;
+
+    const catIds = CONFIG.parameterCategories.map(c => c.id);
+    const perTeamComponents = teams.map(t => {
+        const params = getTeamAggregateParameters(t.id, p);
+        const comps = {};
+        catIds.forEach(cid => { comps[cid] = calculateCategoryValue(cid, params); });
+        return comps;
+    });
+
+    const spreads = catIds.map(cid => stddev(perTeamComponents.map(c => c[cid])));
+    const meanStd = spreads.reduce((a, b) => a + b, 0) / Math.max(1, spreads.length);
+    return clamp(meanStd, 0, 50);
+}
+
+// Расчёт ИГС для команды (по подтверждённым личным решениям участников)
+function calculateTeamIGS(teamId, phase = null) {
+    const p = phase === null ? getDecisionPhaseForUI(state.session.phase) : Number(phase);
+    const agg = getTeamAggregateParameters(teamId, p);
+    return calculateIGS(agg);
 }
 
 // Расчёт среднего ИГС по всем командам
 function calculateAverageIGS() {
     const activeTeams = getActiveTeams();
     if (activeTeams.length === 0) return null;
+    const decisionPhase = getDecisionPhaseForUI(state.session.phase);
     
     // Собираем средние значения параметров
     const allParams = getAllParameters();
     const avgParameters = allParams.map(paramDef => {
         const teamValues = activeTeams.map(team => {
-            const teamData = getTeamData(team.id);
-            const param = teamData.parameters.find(p => p.id === paramDef.id);
+            const params = getTeamAggregateParameters(team.id, decisionPhase);
+            const param = params.find(p => p.id === paramDef.id);
             return param ? param.value : paramDef.default;
         });
         return {
@@ -1355,6 +1451,55 @@ function getParticipantById(participantId) {
     return ensureParticipantMeta(p);
 }
 
+function ensureUserDraftInitialized() {
+    if (state.user?.isModerator) return;
+    const currentPhase = Number(state.session.phase);
+    const decisionPhase = getDecisionPhaseForUI(currentPhase);
+
+    // Инициализируем/переключаем черновик при смене decisionPhase (1 ↔ 4)
+    if (state.userDraft.phase !== decisionPhase || !Array.isArray(state.userDraft.parameters) || state.userDraft.parameters.length === 0) {
+        const me = getParticipantById(state.user.id);
+        const rec = me ? getParticipantConfirmation(me, decisionPhase) : null;
+        const base = (rec?.confirmed && Array.isArray(rec.parameters) && rec.parameters.length > 0)
+            ? rec.parameters
+            : getDefaultParameterVector();
+
+        state.userDraft.phase = decisionPhase;
+        state.userDraft.parameters = cloneParamVector(base);
+        state.userDraft.movesPhase = null;
+        state.userDraft.movesUsed = [];
+    }
+
+    // Сбрасываем лимит ходов при смене текущей фазы
+    if (state.userDraft.movesPhase !== currentPhase) {
+        state.userDraft.movesPhase = currentPhase;
+        state.userDraft.movesUsed = [];
+    }
+
+    // Гарантируем, что вектор полный (если пришёл старый/неполный снимок)
+    const all = getAllParameters();
+    const allIds = all.map(p => p.id);
+    const defaultsById = new Map(all.map(p => [p.id, p.default]));
+    const byId = new Map((state.userDraft.parameters || []).map(x => [x.id, x.value]));
+    state.userDraft.parameters = allIds.map(id => ({ id, value: Number(byId.get(id) ?? defaultsById.get(id) ?? 0) }));
+}
+
+function getUserDraftParameters() {
+    ensureUserDraftInitialized();
+    return state.userDraft.parameters;
+}
+
+function areParamVectorsEqual(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    const mapB = new Map(b.map(x => [x.id, x.value]));
+    for (const x of a) {
+        if (!mapB.has(x.id)) return false;
+        if (Number(mapB.get(x.id)) !== Number(x.value)) return false;
+    }
+    return true;
+}
+
 function getTeamPhaseRevision(teamId, phase) {
     const teamData = getTeamData(teamId);
     if (!teamData.phaseRevisions || typeof teamData.phaseRevisions !== 'object') teamData.phaseRevisions = {};
@@ -1386,18 +1531,15 @@ function isParticipantConfirmedForCurrentDecision(p, teamId, phase) {
     const pp = ensureParticipantMeta(p);
     if (!pp || !teamId) return false;
     const rec = getParticipantConfirmation(pp, phase);
-    if (!rec?.confirmed) return false;
-    const teamRev = getTeamPhaseRevision(teamId, phase);
-    return Number(rec.revision ?? -1) === teamRev;
+    return !!rec?.confirmed;
 }
 
 function isParticipantConfirmationStale(p, teamId, phase) {
     const pp = ensureParticipantMeta(p);
     if (!pp || !teamId) return false;
     const rec = getParticipantConfirmation(pp, phase);
-    if (!rec?.confirmed) return false;
-    const teamRev = getTeamPhaseRevision(teamId, phase);
-    return Number(rec.revision ?? -1) !== teamRev;
+    // В новой логике нет "общей ревизии команды": каждый участник подтверждает своё личное решение.
+    return false;
 }
 
 function getTeamConfirmationStats(teamId, phase) {
@@ -1408,11 +1550,9 @@ function getTeamConfirmationStats(teamId, phase) {
 }
 
 function isTeamDecisionLocked(teamId, phase) {
-    // Лочим изменения для капитана, когда все (не-боты) подтвердили текущую версию решения в фазе ввода
-    const isInputPhase = (phase === 1 || phase === 4);
-    if (!isInputPhase) return false;
-    const { confirmed, total } = getTeamConfirmationStats(teamId, phase);
-    return total > 0 && confirmed >= total;
+    // Раньше лочили редактирование капитана, когда все подтвердили общекомандный вектор.
+    // Теперь решения личные → командной блокировки нет.
+    return false;
 }
 
 // =====================================================
@@ -1542,22 +1682,26 @@ function initLoginScreen() {
     $('#demo-btn').addEventListener('click', startDemo);
 }
 
-function joinSession(code, name, realRole) {
+async function joinSession(code, name, realRole) {
     console.log('🔄 Попытка входа в сессию:', code);
     
     // Если Firebase включен - сначала проверяем существование сессии
     if (firebaseEnabled) {
         const sessionRef = firebaseDB.ref(`sessions/${code}`);
-        return sessionRef.once('value').then((snapshot) => {
-            const sessionData = snapshot.val();
-            
+        try {
+            // Retry: сессия может появиться чуть позже (модератор только что нажал "создать")
+            const sessionData = await retry(async () => {
+                const snapshot = await sessionRef.once('value');
+                return snapshot.val();
+            }, { retries: 8, delayMs: 250 });
+
             if (!sessionData) {
                 showNotification('Сессия не найдена! Проверьте код.', 'error');
-                return Promise.reject(new Error('Session not found'));
+                throw new Error('Session not found');
             }
-            
+
             console.log('✅ Сессия найдена:', sessionData);
-            
+
             // Загружаем данные сессии
             if (sessionData.session) {
                 // Игнорируем session.phase — фазу берём из sessionData.phase (root)
@@ -1567,23 +1711,22 @@ function joinSession(code, name, realRole) {
             }
             state.session.code = code;
             state.session.phase = sessionData.phase || 0;
-            
+
             // Теперь подключаем участника
-            completeJoinSession(code, name, realRole);
-            
+            await completeJoinSession(code, name, realRole);
             return true;
-        }).catch((error) => {
+        } catch (error) {
             console.error('❌ Ошибка Firebase:', error);
             showNotification('Ошибка подключения. Попробуйте снова.', 'error');
             throw error;
-        });
+        }
     } else {
         // Без Firebase — подключаемся к локальной сессии (между вкладками)
         initLocalSync();
         const localSession = localReadSession(code);
         if (!localSession) {
             showNotification('Сессия не найдена (локально). Создайте её в другой вкладке или включите Firebase.', 'error');
-            return Promise.reject(new Error('Local session not found'));
+            throw new Error('Local session not found');
         }
         
         // Загружаем данные сессии из localStorage
@@ -1596,12 +1739,12 @@ function joinSession(code, name, realRole) {
         state.session.phase = typeof localSession.phase === 'number' ? localSession.phase : (state.session.phase || 0);
         
         // Подключаем участника
-        completeJoinSession(code, name, realRole);
-        return Promise.resolve(true);
+        await completeJoinSession(code, name, realRole);
+        return true;
     }
 }
 
-function completeJoinSession(code, name, realRole) {
+async function completeJoinSession(code, name, realRole) {
     state.session.code = code;
     state.user.id = generateId();
     state.user.name = name;
@@ -1611,7 +1754,8 @@ function completeJoinSession(code, name, realRole) {
     // Сначала загружаем существующих участников из Firebase
     if (firebaseEnabled) {
         const sessionRef = firebaseDB.ref(`sessions/${code}`);
-        sessionRef.child('participants').once('value', (snapshot) => {
+        try {
+            const snapshot = await sessionRef.child('participants').once('value');
             const existingParticipants = snapshot.val();
             if (existingParticipants) {
                 console.log('👥 Загружаю существующих участников перед подключением:', Object.keys(existingParticipants).length);
@@ -1620,13 +1764,13 @@ function completeJoinSession(code, name, realRole) {
                     state.participants.push(ensureParticipantMeta(p));
                 });
             }
-            
-            // Теперь добавляем себя
-            completeJoinSessionStep2(code, name, realRole);
-        });
-    } else {
-        completeJoinSessionStep2(code, name, realRole);
+        } catch (e) {
+            console.warn('⚠️ Не удалось загрузить список участников перед входом, продолжаю подключение:', e);
+        }
     }
+
+    // Теперь добавляем себя
+    completeJoinSessionStep2(code, name, realRole);
 }
 
 function completeJoinSessionStep2(code, name, realRole) {
@@ -1646,6 +1790,13 @@ function completeJoinSessionStep2(code, name, realRole) {
     
     // Инициализируем параметры из новой структуры
     state.parameters = getAllParameters();
+
+    // Инициализируем личный черновик участника
+    state.userDraft.phase = null;
+    state.userDraft.parameters = [];
+    state.userDraft.movesPhase = null;
+    state.userDraft.movesUsed = [];
+    ensureUserDraftInitialized();
     
     // Инициализируем данные команды
     initTeamData(assignedTeam.id);
@@ -1688,7 +1839,7 @@ function completeJoinSessionStep2(code, name, realRole) {
     console.log('✅ Участник подключен, текущая фаза:', state.session.phase);
 }
 
-function createSession(sessionName, moderatorName, customCode = '', projectScale = 'medium', budgetLevel = 'medium') {
+async function createSession(sessionName, moderatorName, customCode = '', projectScale = 'medium', budgetLevel = 'medium') {
     console.log('🎬 Создание новой сессии...');
     
     // ⚠️ СБРОС ВСЕХ ДАННЫХ для новой сессии
@@ -1729,14 +1880,12 @@ function createSession(sessionName, moderatorName, customCode = '', projectScale
     // Сохраняем начальное состояние
     state.session.initialSnapshot = JSON.parse(JSON.stringify(state.teamsData));
     
-    // Сохраняем в Firebase
-    saveSessionToFirebase();
+    // Сохраняем в Firebase (и ждём, чтобы участники могли подключаться сразу)
+    await saveSessionToFirebase();
     
     // Подписываемся на обновления ПОСЛЕ сохранения
-    setTimeout(() => {
-        console.log('📡 Подписываюсь на сессию как модератор');
-        subscribeToSession(code);
-    }, 100);
+    console.log('📡 Подписываюсь на сессию как модератор');
+    subscribeToSession(code);
     
     showScreen('moderator-screen');
     initModeratorScreen();
@@ -1813,9 +1962,7 @@ function renderRoleCard() {
     if (gameRole && team) {
         const captainBadge = userIsCaptain ? ' 👑' : '';
         $('#role-name').textContent = `${gameRole.icon} ${gameRole.name}${captainBadge}`;
-        $('#role-desc').textContent = userIsCaptain 
-            ? 'Вы капитан команды! Управляйте ползунками параметров.' 
-            : gameRole.desc;
+        $('#role-desc').textContent = `${gameRole.desc}. Вносите личные изменения и подтверждайте своё решение.`;
         $('#role-team').textContent = team.name + (userIsCaptain ? ' (капитан)' : '');
         $('#role-team').className = `role-team team-${team.id}`;
         roleCard.classList.remove('hidden');
@@ -1846,23 +1993,12 @@ function renderParameters() {
         CONFIG.parameterCategories.forEach(cat => { state.ui.accordionOpen[cat.id] = true; });
     }
     
-    // Проверяем, является ли пользователь капитаном
-    const userIsCaptain = isCaptain(state.user.id);
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
+    // Каждый участник меняет ЛИЧНЫЙ черновик (локально)
+    const draftParams = getUserDraftParameters();
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
     const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
-    const teamLockedByConfirmations = state.user.team ? isTeamDecisionLocked(state.user.team.id, currentPhase) : false;
-    
-    // Нормализуем состояние лимита ходов для команды
-    if (teamData) {
-        if (teamData.movesPhase !== currentPhase) {
-            teamData.movesPhase = currentPhase;
-            teamData.movesUsed = [];
-        }
-        if (!Array.isArray(teamData.movesUsed)) teamData.movesUsed = [];
-    }
-    const movesUsed = teamData?.movesUsed || [];
+    const movesUsed = Array.isArray(state.userDraft.movesUsed) ? state.userDraft.movesUsed : (state.userDraft.movesUsed = []);
     const movesRemaining = Math.max(0, moveLimit - movesUsed.length);
     
     // Рендерим параметры по категориям
@@ -1908,18 +2044,18 @@ function renderParameters() {
             const min = constraint.min ?? param.min;
             const max = constraint.max ?? param.max;
             
-            // Получаем значение из данных команды
-            const teamParam = teamData?.parameters.find(p => p.id === param.id);
-            const value = teamParam ? teamParam.value : param.default;
+            // Получаем значение из личного черновика
+            const draftParam = draftParams.find(p => p.id === param.id);
+            const value = (draftParam && typeof draftParam.value === 'number') ? draftParam.value : param.default;
             
-            // Ползунок неактивен если не капитан или заблокирован
+            // Ползунок неактивен если заблокирован/не фаза ввода/лимит изменений исчерпан
             const alreadyUsedThisPhase = movesUsed.includes(param.id);
             const movesExhausted = movesRemaining <= 0;
             const blockedByMoveLimit = movesExhausted && !alreadyUsedThisPhase;
-            const isDisabled = !userIsCaptain || isLocked || !isInputPhase || teamLockedByConfirmations || blockedByMoveLimit;
+            const isDisabled = isLocked || !isInputPhase || blockedByMoveLimit;
             
             const card = document.createElement('div');
-            card.className = `param-card ${isLocked ? 'locked' : ''} ${!userIsCaptain ? 'readonly' : ''}`;
+            card.className = `param-card ${isLocked ? 'locked' : ''}`;
             card.style.borderLeftColor = category.color;
             card.innerHTML = `
                 <div class="param-header">
@@ -1937,41 +2073,35 @@ function renderParameters() {
                         <span>${max}${param.unit}</span>
                     </div>
                 </div>
-                ${!userIsCaptain
-                    ? '<div class="param-notice">Только капитан может изменять</div>'
-                    : (!isInputPhase
-                        ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
-                        : (teamLockedByConfirmations
-                            ? '<div class="param-notice">Все участники подтвердили — изменения заблокированы</div>'
-                            : (blockedByMoveLimit
-                                ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
-                                : (movesUsed.length > 0
-                                    ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
-                                    : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))))}
+                ${!isInputPhase
+                    ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
+                    : (blockedByMoveLimit
+                        ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
+                        : (movesUsed.length > 0
+                            ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
+                            : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))}
             `;
             
             body.appendChild(card);
             
-            // Обработчик слайдера (только для капитана)
-            if (userIsCaptain && !isLocked && isInputPhase && !teamLockedByConfirmations) {
+            // Обработчик слайдера (каждый участник меняет ЛИЧНЫЙ черновик)
+            if (!isLocked && isInputPhase) {
                 const slider = card.querySelector(`#slider-${param.id}`);
                 slider.addEventListener('input', (e) => {
                     const newValue = parseInt(e.target.value);
-                    const teamDataNow = state.user.team ? getTeamData(state.user.team.id) : null;
-                    if (!teamDataNow) return;
                     
                     // Если фаза сменилась — сбрасываем счётчик изменений
-                    if (teamDataNow.movesPhase !== currentPhase) {
-                        teamDataNow.movesPhase = currentPhase;
-                        teamDataNow.movesUsed = [];
+                    if (state.userDraft.movesPhase !== currentPhase) {
+                        state.userDraft.movesPhase = currentPhase;
+                        state.userDraft.movesUsed = [];
                     }
                     
-                    const used = Array.isArray(teamDataNow.movesUsed) ? teamDataNow.movesUsed : (teamDataNow.movesUsed = []);
+                    const used = Array.isArray(state.userDraft.movesUsed) ? state.userDraft.movesUsed : (state.userDraft.movesUsed = []);
                     const alreadyUsed = used.includes(param.id);
                     const limit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
                     if (!alreadyUsed && used.length >= limit) {
                         // Отменяем изменение: возвращаем ползунок к текущему сохранённому значению
-                        const prevValue = teamDataNow.parameters.find(p => p.id === param.id)?.value ?? value;
+                        const prevValue = (getUserDraftParameters().find(p => p.id === param.id)?.value ?? value);
                         e.target.value = String(prevValue);
                         card.querySelector(`#value-${param.id}`).textContent = prevValue + param.unit;
                         showNotification(`Лимит изменений на фазу исчерпан (${limit}).`, 'warning');
@@ -1983,21 +2113,10 @@ function renderParameters() {
                     
                     card.querySelector(`#value-${param.id}`).textContent = newValue + param.unit;
                     
-                    // Обновляем данные команды
-                    if (teamDataNow) {
-                        const teamParamData = teamDataNow.parameters.find(p => p.id === param.id);
-                        const prev = teamParamData ? teamParamData.value : undefined;
-                        if (teamParamData) teamParamData.value = newValue;
-
-                        // Если значение реально изменилось — увеличиваем ревизию решения для текущей фазы,
-                        // чтобы всем участникам нужно было подтвердить заново (без массовых записей participants/*)
-                        if (typeof prev === 'number' && prev !== newValue) {
-                            bumpTeamPhaseRevision(state.user.team.id, currentPhase);
-                        }
-                        
-                        // Синхронизируем с Firebase (с debounce)
-                        debounceSaveTeam(state.user.team.id);
-                    }
+                    // Обновляем личный черновик
+                    const vec = getUserDraftParameters();
+                    const entry = vec.find(p => p.id === param.id);
+                    if (entry) entry.value = newValue;
                     
                     // Обновляем ИГС в реальном времени
                     updateIGSDisplay();
@@ -2032,14 +2151,14 @@ function renderIGSPanel() {
         }
     }
     
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
-    if (!teamData || !igsPanel) return;
+    const params = getUserDraftParameters();
+    if (!params || !igsPanel) return;
     
-    const igs = calculateIGS(teamData.parameters);
+    const igs = calculateIGS(params);
     
     igsPanel.innerHTML = `
         <div class="igs-main">
-            <div class="igs-label">ИГС вашей команды</div>
+            <div class="igs-label">ИГС вашего решения</div>
             <div class="igs-value ${getIGSClass(igs.total)}">${igs.total.toFixed(1)}</div>
             <div class="igs-bar">
                 <div class="igs-bar-fill" style="width: ${igs.total}%"></div>
@@ -2064,13 +2183,13 @@ function renderIGSPanel() {
     `;
 }
 
-// Матрица команд на экране участника (видно только капитану команды)
+// Матрица команд на экране участника
 function renderCaptainMatrix() {
     const section = $('#captain-matrix-section');
     const table = $('#captain-params-matrix');
     if (!section || !table) return;
 
-    const show = !state.user.isModerator && isCaptain(state.user.id);
+    const show = !state.user.isModerator;
     section.classList.toggle('hidden', !show);
     if (!show) return;
 
@@ -2181,17 +2300,17 @@ function updateIGSHero() {
     const igsHero = $('#igs-hero');
     
     if (!heroValue) return;
+
+    const params = getUserDraftParameters();
+    if (!params) return;
     
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
-    if (!teamData) return;
-    
-    const igs = calculateIGS(teamData.parameters);
+    const igs = calculateIGS(params);
     // Бюджет как ограничение "ходов": сколько разных ползунков можно тронуть за фазу ввода
     const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
-    const movesUsed = (teamData.movesPhase === currentPhase && Array.isArray(teamData.movesUsed)) ? teamData.movesUsed.length : 0;
-    const budgetUsed = isInputPhase ? Math.round((movesUsed / Math.max(1, moveLimit)) * state.session.budgetTotal) : calculateBudgetUsed(teamData.parameters);
+    const movesUsed = (state.userDraft.movesPhase === currentPhase && Array.isArray(state.userDraft.movesUsed)) ? state.userDraft.movesUsed.length : 0;
+    const budgetUsed = isInputPhase ? Math.round((movesUsed / Math.max(1, moveLimit)) * state.session.budgetTotal) : calculateBudgetUsed(params);
     const budgetTotal = state.session.budgetTotal;
     
     heroValue.textContent = igs.total.toFixed(1);
@@ -2230,13 +2349,13 @@ function updateIGSDisplay() {
 function updateTerritoryMap() {
     const mapSvg = $('#map-svg');
     if (!mapSvg) return;
-    
-    const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
-    if (!teamData) return;
+
+    const params = getUserDraftParameters();
+    if (!params) return;
     
     // Получаем значения ключевых параметров
     const getParamValue = (id) => {
-        const param = teamData.parameters.find(p => p.id === id);
+        const param = params.find(p => p.id === id);
         return param ? param.value : 50;
     };
     
@@ -2245,7 +2364,7 @@ function updateTerritoryMap() {
     const hardCover = getParamValue('Ca');   // Твёрдое покрытие
     const lighting = getParamValue('O');     // Освещённость
     const bikePaths = getParamValue('B');    // Велоинфраструктура
-    const igsTotal = calculateIGS(teamData.parameters).total;
+    const igsTotal = calculateIGS(params).total;
     
     // Обновляем визуализацию карты
     
@@ -2341,26 +2460,26 @@ function updateConfirmButton() {
         statusEl.textContent = getPhaseStatusMessage(currentPhase);
         return;
     }
-    
-    const teamId = state.user.team?.id;
-    if (!teamId) {
+
+    const me = getParticipantById(state.user.id);
+    if (!me) {
         btn.disabled = true;
-        statusEl.textContent = 'Команда не назначена';
+        statusEl.textContent = 'Участник не найден';
         return;
     }
 
-    const me = getParticipantById(state.user.id);
-    const isConfirmed = isParticipantConfirmedForCurrentDecision(me, teamId, currentPhase);
-    const isStale = isParticipantConfirmationStale(me, teamId, currentPhase);
+    const rec = getParticipantConfirmation(me, currentPhase);
+    const draft = getUserDraftParameters();
+    const confirmedSameAsDraft = !!(rec?.confirmed && Array.isArray(rec.parameters) && areParamVectorsEqual(rec.parameters, draft));
 
-    if (isConfirmed) {
+    if (confirmedSameAsDraft) {
         btn.disabled = true;
         statusEl.textContent = 'Вы подтвердили решение ✓';
         return;
     }
 
     btn.disabled = false;
-    statusEl.textContent = isStale
+    statusEl.textContent = (rec?.confirmed)
         ? 'Решение изменилось — подтвердите заново'
         : 'Нажмите, чтобы подтвердить своё решение';
 }
@@ -2373,23 +2492,15 @@ function confirmDecision() {
         return;
     }
 
-    const teamId = state.user.team?.id;
-    if (!teamId) {
-        showNotification('Команда не назначена', 'error');
-        return;
-    }
-
-    const teamData = getTeamData(teamId);
     const me = getParticipantById(state.user.id);
     if (!me) return;
 
-    const teamRev = getTeamPhaseRevision(teamId, currentPhase);
-    const snapshot = JSON.parse(JSON.stringify(teamData.parameters || []));
+    const snapshot = cloneParamVector(getUserDraftParameters());
     const at = new Date().toISOString();
 
     me.confirmations[String(currentPhase)] = {
         confirmed: true,
-        revision: teamRev,
+        revision: 0,
         at,
         parameters: snapshot
     };
@@ -2402,14 +2513,14 @@ function confirmDecision() {
     $('#confirm-status').textContent = 'Вы подтвердили решение ✓';
     $('#confirm-btn').disabled = true;
 
-    // Если пользователь капитан — возможно, решение теперь "закрыто" (все подтвердили)
+    // Обновим UI после подтверждения
     renderParameters();
 
     addToHistory('Подтвердили своё решение');
-    addToLog('confirm', `${state.user.name} подтвердил(а) решение (${state.user.team?.name || teamId})`);
+    addToLog('confirm', `${state.user.name} подтвердил(а) решение (${state.user.team?.name || 'команда'})`);
     showNotification('Ваше решение подтверждено!', 'success');
 
-    console.log(`✅ Участник ${state.user.id} подтвердил решение команды ${teamId} в фазе ${currentPhase} (rev=${teamRev})`);
+    console.log(`✅ Участник ${state.user.id} подтвердил ЛИЧНОЕ решение в фазе ${currentPhase}`);
 }
 
 // Панель истории
@@ -2714,27 +2825,16 @@ function applyPhaseLogic(phase) {
     
     console.log(`⚙️ Применяю логику фазы ${phase}, ввод активен: ${isInputPhase}`);
     
-    // В начале фазы ввода сбрасываем legacy-флаг команды и обнуляем ревизию решения для этой фазы
-    if (isInputPhase) {
-        Object.keys(state.teamsData).forEach(teamId => {
-            const td = state.teamsData[teamId];
-            if (!td) return;
-            td.confirmed = false;
-            if (!td.phaseRevisions || typeof td.phaseRevisions !== 'object') td.phaseRevisions = {};
-            td.phaseRevisions[String(phase)] = 0;
-        });
-        console.log('🔄 Сброшены ревизии решений команд для фазы ввода', phase);
+    // Личное редактирование: при входе в фазу ввода гарантируем, что черновик и лимиты обновились
+    if (!state.user.isModerator) {
+        ensureUserDraftInitialized();
     }
     
     // Блокируем/разблокируем ползунки (только для участников)
     if (!state.user.isModerator) {
         const sliders = $$('.param-card .slider');
         sliders.forEach(slider => {
-            if (!isCaptain(state.user.id)) {
-                slider.disabled = true; // Не капитан — всегда заблокирован
-            } else {
-                slider.disabled = !isInputPhase; // Капитан — только в раундах ввода
-            }
+            slider.disabled = !isInputPhase;
         });
         
         // Визуально показываем статус ползунков
@@ -2791,7 +2891,7 @@ function updateEventBanner(phase) {
     
     const phaseInfo = {
         0: { icon: '⏳', title: 'Добро пожаловать!', text: 'Ожидайте начала симуляции от модератора.' },
-        1: { icon: '✏️', title: 'Раунд 1: Принятие решений', text: 'Обсудите в команде и настройте параметры проекта. Капитан управляет ползунками.' },
+        1: { icon: '✏️', title: 'Раунд 1: Принятие решений', text: 'Обсудите в команде и настройте параметры проекта. Каждый участник вносит личные предложения.' },
         2: { icon: '📊', title: 'Анализ результатов', text: 'Изучите решения других команд. Обсудите конфликты и точки согласия.' },
         3: { icon: '⚡', title: 'Интермиссия', text: 'Модератор вводит неожиданное событие. Готовьтесь к изменениям!' },
         4: { icon: '🤝', title: 'Раунд 2: Переговоры', text: 'Скорректируйте решения с учётом новых условий и мнений других команд.' },
