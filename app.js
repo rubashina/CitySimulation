@@ -962,34 +962,90 @@ const CONFIG = {
     // Шаблоны событий
     eventTemplates: {
         budget: {
-            name: 'Сокращение бюджета',
-            desc: 'Из-за экономической ситуации бюджет проекта сокращён на 20%. Необходимо пересмотреть приоритеты.',
-            effect: 'limit_max',
-            params: { parameter: 'budget', value: 80 }
+            name: '💰 Сокращение бюджета',
+            desc: 'Из-за экономической ситуации ресурсы ограничены. Сделайте компромиссы: уменьшите трафик и твёрдое покрытие, сфокусируйтесь на базовых улучшениях.',
+            effect: 'none',
+            params: {},
+            actions: [
+                { effect: 'limit_max', parameter: 'Ca', value: 55 },
+                { effect: 'limit_max', parameter: 'Tp', value: 45 }
+            ]
         },
         protest: {
-            name: 'Протест жителей',
-            desc: 'Жители микрорайона выступают против высотной застройки. Требуется снизить плотность.',
-            effect: 'limit_max',
-            params: { parameter: 'density', value: 60 }
+            name: '📣 Протест жителей',
+            desc: 'Жители требуют меньше асфальта и больше зелени: снизьте твёрдое покрытие и повысьте озеленение.',
+            effect: 'none',
+            params: {},
+            actions: [
+                { effect: 'limit_max', parameter: 'Ca', value: 50 },
+                { effect: 'limit_min', parameter: 'Z', value: 40 }
+            ]
         },
         eco: {
-            name: 'Экологическое требование',
+            name: '🌿 Экологическое требование',
             desc: 'Экологическая экспертиза требует увеличить озеленение минимум до 40%.',
             effect: 'limit_min',
-            params: { parameter: 'green', value: 40 }
+            params: { parameter: 'Z', value: 40 }
         },
         investor: {
-            name: 'Интерес инвестора',
-            desc: 'Крупный инвестор готов вложиться в проект при условии развития коммерческой инфраструктуры.',
+            name: '🏗️ Интерес инвестора',
+            desc: 'Инвестор поддержит проект при условии развития функций и активных фасадов.',
             effect: 'none',
-            params: {}
+            params: {},
+            actions: [
+                { effect: 'limit_min', parameter: 'N', value: 55 },
+                { effect: 'limit_min', parameter: 'Af', value: 55 }
+            ]
         },
         tech: {
-            name: 'Технический сбой',
-            desc: 'Обнаружены проблемы с инженерными сетями. Параметр транспорта временно заблокирован.',
-            effect: 'lock',
-            params: { parameter: 'transport' }
+            name: '⚠️ Технический сбой',
+            desc: 'Обнаружены проблемы с инфраструктурой. Часть параметров временно заблокирована.',
+            effect: 'none',
+            params: {},
+            actions: [
+                { effect: 'lock', parameter: 'O' },   // освещённость
+                { effect: 'lock', parameter: 'B' }    // велоинфраструктура
+            ]
+        },
+        noise: {
+            name: '🔇 Жалобы на шум',
+            desc: 'Жители жалуются на шум. Нужно повысить тишину и снизить трафик.',
+            effect: 'none',
+            params: {},
+            actions: [
+                { effect: 'limit_min', parameter: 'L', value: 60 },
+                { effect: 'limit_max', parameter: 'Tp', value: 40 }
+            ]
+        },
+        safety: {
+            name: '🚨 Запрос на безопасность',
+            desc: 'Город просит повысить визуальную безопасность и освещённость.',
+            effect: 'none',
+            params: {},
+            actions: [
+                { effect: 'limit_min', parameter: 'V', value: 65 },
+                { effect: 'limit_min', parameter: 'O', value: 65 }
+            ]
+        },
+        heat: {
+            name: '☀️ Жара',
+            desc: 'Аномальная жара. Требуется больше тени и зелени.',
+            effect: 'none',
+            params: {},
+            actions: [
+                { effect: 'limit_min', parameter: 'Tg', value: 55 },
+                { effect: 'limit_min', parameter: 'Z', value: 40 }
+            ]
+        },
+        accessibility: {
+            name: '♿ Требование доступности',
+            desc: 'Экспертиза МГН: повысить безбарьерность и универсальность.',
+            effect: 'none',
+            params: {},
+            actions: [
+                { effect: 'limit_min', parameter: 'I', value: 55 },
+                { effect: 'limit_min', parameter: 'U', value: 55 }
+            ]
         },
         custom: {
             name: '',
@@ -3489,16 +3545,34 @@ function initEventEditor() {
         btn.addEventListener('click', () => {
             const template = CONFIG.eventTemplates[btn.dataset.template];
             if (template) {
+                if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+                state.ui.eventDraftActions = Array.isArray(template.actions) ? template.actions : null;
                 $('#event-name-input').value = template.name;
                 $('#event-desc-input').value = template.desc;
-                $('#event-effect-select').value = template.effect;
-                updateEffectParams(template.effect, template.params);
+                $('#event-effect-select').value = template.effect || 'none';
+                updateEffectParams(template.effect || 'none', template.params || {});
+                // Если это сценарий с несколькими эффектами — показываем подсказку
+                if (state.ui.eventDraftActions) {
+                    $('#event-effect-select').value = 'none';
+                    const container = $('#effect-params');
+                    if (container) {
+                        container.innerHTML = `
+                            <div class="input-hint">
+                                Этот сценарий применит несколько эффектов (настройки внутри шаблона).
+                                При необходимости отредактируйте текст и отправьте.
+                            </div>
+                        `;
+                    }
+                }
             }
         });
     });
     
     // Изменение эффекта
     $('#event-effect-select').addEventListener('change', (e) => {
+        if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+        // Пользователь редактирует эффект руками — снимаем мульти-режим шаблона
+        state.ui.eventDraftActions = null;
         updateEffectParams(e.target.value);
     });
     
@@ -3557,6 +3631,7 @@ function sendEvent() {
         desc,
         effect,
         params: {},
+        actions: null,
         time: new Date()
     };
     
@@ -3566,6 +3641,13 @@ function sendEvent() {
     
     if (paramSelect) event.params.parameter = paramSelect.value;
     if (valueInput) event.params.value = parseInt(valueInput.value);
+
+    // Если выбран шаблон-сценарий с несколькими эффектами
+    if (state.ui?.eventDraftActions && Array.isArray(state.ui.eventDraftActions)) {
+        event.effect = 'multi';
+        event.actions = state.ui.eventDraftActions.map(a => ({ ...a }));
+        event.params = {};
+    }
     
     // Применяем эффект
     applyEventEffect(event);
@@ -3604,9 +3686,15 @@ function sendEvent() {
     $('#event-desc-input').value = '';
     $('#event-effect-select').value = 'none';
     $('#effect-params').innerHTML = '';
+    if (state.ui) state.ui.eventDraftActions = null;
 }
 
 function applyEventEffect(event) {
+    // Мульти-сценарии: применяем набор эффектов
+    if (Array.isArray(event.actions) && event.actions.length > 0) {
+        event.actions.forEach(a => applyEventEffect({ effect: a.effect, params: a }));
+        return;
+    }
     switch (event.effect) {
         case 'limit_max':
             state.constraints[event.params.parameter] = {
