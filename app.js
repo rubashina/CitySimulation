@@ -1760,6 +1760,48 @@ function calculateAverageIGS() {
     return calculateIGS(avgParameters);
 }
 
+function computeTopConflictingParameters(limit = 5) {
+    const decisionPhase = getLatestDecisionPhase(state.session.phase);
+    const teams = getActiveTeams();
+    if (teams.length <= 1) return [];
+
+    const allParams = getAllParameters();
+    const byTeam = teams.map(t => ({
+        team: t,
+        params: getTeamAggregateParameters(t.id, decisionPhase)
+    }));
+
+    const scores = allParams.map(def => {
+        const vals = byTeam.map(x => x.params.find(p => p.id === def.id)?.value).filter(v => typeof v === 'number' && Number.isFinite(v));
+        const sd = stddev(vals);
+        const min = vals.length ? Math.min(...vals) : null;
+        const max = vals.length ? Math.max(...vals) : null;
+        return { id: def.id, name: def.name, sd, min, max };
+    });
+
+    scores.sort((a, b) => b.sd - a.sd);
+    return scores.slice(0, limit);
+}
+
+function renderTopConflictParams() {
+    const container = $('#conflict-params-list');
+    if (!container) return;
+    const items = computeTopConflictingParameters(5);
+    if (!items.length) {
+        container.innerHTML = '<div class="empty-state">—</div>';
+        return;
+    }
+    container.innerHTML = items.map(it => {
+        const range = (it.min !== null && it.max !== null) ? `${Math.round(it.min)}–${Math.round(it.max)}` : '—';
+        return `
+            <div class="conflict-param-item" data-tooltip="${it.name}: разброс ${it.sd.toFixed(1)} (диапазон ${range})">
+                <div class="conflict-param-name">${it.name}</div>
+                <div class="conflict-param-spread">σ ${it.sd.toFixed(1)}</div>
+            </div>
+        `;
+    }).join('');
+}
+
 // =====================================================
 // УПРАВЛЕНИЕ КОМАНДАМИ
 // =====================================================
@@ -3745,6 +3787,7 @@ function updateMetrics() {
         const cDesc = $('#consensus-desc');
         if (dDesc) dDesc.textContent = 'Расхождение команд';
         if (cDesc) cDesc.textContent = '—';
+        renderTopConflictParams();
         return;
     }
     
@@ -3774,6 +3817,8 @@ function updateMetrics() {
         const pct = normalizeIGSPercent(igsValue);
         cDesc.textContent = `${getIGSGradeText(igsValue)} • ${pct.toFixed(0)}% от максимума модели`;
     }
+
+    renderTopConflictParams();
 }
 
 // Редактор событий
