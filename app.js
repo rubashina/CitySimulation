@@ -192,6 +192,7 @@ function handleLocalMessage(msg) {
                 Object.keys(msg.teams).forEach(teamId => {
                     state.teamsData[teamId] = msg.teams[teamId];
                 });
+                syncCaptainFlagsFromTeams();
                 if (state.user.isModerator) {
                     renderParticipantsList();
                     renderParamsMatrix();
@@ -200,6 +201,9 @@ function handleLocalMessage(msg) {
                     updateCharts();
                 } else {
                     updateIGSDisplay();
+                    renderRoleCard();
+                    renderParameters();
+                    renderCaptainMatrix();
                     updateConfirmButton();
                 }
             }
@@ -239,6 +243,7 @@ function syncSessionFromLocal(data) {
     if (data.teams) {
         state.teamsData = { ...state.teamsData, ...data.teams };
     }
+    syncCaptainFlagsFromTeams();
     updatePhaseUI();
 }
 
@@ -387,6 +392,9 @@ function subscribeToSession(sessionCode) {
                     console.log(`🔄 Команда ${teamId}: confirmed ${oldConfirmed} → ${newConfirmed}`);
                 }
             });
+
+            // Синхронизируем p.isCaptain по captainId из teamsData (для списков/экспорта)
+            syncCaptainFlagsFromTeams();
             
             if (state.user.isModerator) {
                 renderParticipantsList();
@@ -396,6 +404,9 @@ function subscribeToSession(sessionCode) {
                 updateCharts();
             } else {
                 updateIGSDisplay();
+                renderRoleCard();
+                renderParameters();
+                renderCaptainMatrix();
                 updateConfirmButton();
             }
         }
@@ -1292,10 +1303,13 @@ function assignTeamCaptain(teamId) {
         return;
     }
     
-    // Назначаем случайного капитана
-    const captain = teamMembers[Math.floor(Math.random() * teamMembers.length)];
+    // Предсказуемое назначение капитана:
+    // - если капитана ещё нет, делаем капитаном первого "живого" участника (или первого вообще)
+    const humanMembers = teamMembers.filter(p => !p.isBot);
+    const captain = (humanMembers[0] || teamMembers[0]);
     teamData.captainId = captain.id;
-    captain.isCaptain = true;
+    // Поддерживаем флаги на участниках (для экспорта/списков)
+    teamMembers.forEach(m => { m.isCaptain = (m.id === captain.id); });
     
     addToLog('team', `${captain.name} назначен капитаном ${CONFIG.teams.find(t => t.id === teamId)?.name}`);
 }
@@ -1322,6 +1336,18 @@ function ensureParticipantMeta(p) {
     if (typeof p.confirmedPhase !== 'number') p.confirmedPhase = null;
     if (!p.confirmations || typeof p.confirmations !== 'object') p.confirmations = {};
     return p;
+}
+
+function syncCaptainFlagsFromTeams() {
+    // Держим p.isCaptain в согласованном виде (для списков/экспорта).
+    // Источник правды: teamsData[teamId].captainId
+    if (!Array.isArray(state.participants)) return;
+    state.participants.forEach(p => {
+        if (!p?.team?.id) return;
+        const capId = state.teamsData?.[p.team.id]?.captainId;
+        if (!capId) return;
+        p.isCaptain = p.id === capId;
+    });
 }
 
 function getParticipantById(participantId) {
@@ -1750,6 +1776,7 @@ function initParticipantScreen() {
     updateParticipantHeader();
     renderRoleCard();
     renderParameters();
+    renderCaptainMatrix();
     initHistoryPanel();
     initTerritoryMapControls();
     
@@ -1807,11 +1834,17 @@ function updateParticipantHeader() {
 
 function renderParameters() {
     const grid = $('#parameters-grid');
+    if (!grid) return;
     grid.innerHTML = '';
 
     // Аккордеон по категориям
     if (!state.ui || typeof state.ui !== 'object') state.ui = {};
     if (!state.ui.accordionOpen || typeof state.ui.accordionOpen !== 'object') state.ui.accordionOpen = {};
+    // Если ничего не открыто (первый рендер / чистый UI) — раскрываем всё,
+    // чтобы блок "Параметры проекта" не выглядел пустым.
+    if (Object.keys(state.ui.accordionOpen).length === 0) {
+        CONFIG.parameterCategories.forEach(cat => { state.ui.accordionOpen[cat.id] = true; });
+    }
     
     // Проверяем, является ли пользователь капитаном
     const userIsCaptain = isCaptain(state.user.id);
@@ -2029,6 +2062,62 @@ function renderIGSPanel() {
             </div>
         </div>
     `;
+}
+
+// Матрица команд на экране участника (видно только капитану команды)
+function renderCaptainMatrix() {
+    const section = $('#captain-matrix-section');
+    const table = $('#captain-params-matrix');
+    if (!section || !table) return;
+
+    const show = !state.user.isModerator && isCaptain(state.user.id);
+    section.classList.toggle('hidden', !show);
+    if (!show) return;
+
+    const activeTeams = getActiveTeams();
+    const decisionPhase = getLatestDecisionPhase(state.session.phase);
+
+    if (activeTeams.length === 0) {
+        table.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 1.5rem;">Нет активных команд</td></tr>';
+        return;
+    }
+
+    let html = '<thead><tr><th>Команда</th>';
+    CONFIG.parameterCategories.forEach(cat => {
+        html += `<th style="color: ${cat.color}" title="${cat.name}">${cat.icon}</th>`;
+    });
+    html += '<th title="Индекс Городской Среды">ИГС</th><th>Подтв.</th></tr></thead><tbody>';
+
+    activeTeams.forEach(team => {
+        const igs = calculateTeamIGS(team.id);
+        const stats = getTeamConfirmationStats(team.id, decisionPhase);
+        html += `<tr style="border-left: 4px solid ${team.color}">`;
+        html += `<td class="participant-name-cell"><strong>${team.name}</strong></td>`;
+        CONFIG.parameterCategories.forEach(cat => {
+            const catValue = igs.components[cat.id];
+            const colorClass = catValue <= 33 ? 'low' : (catValue <= 66 ? 'mid' : 'high');
+            html += `<td class="${colorClass}" title="${cat.name}: ${catValue.toFixed(1)}">${catValue.toFixed(0)}</td>`;
+        });
+        html += `<td class="${getIGSClass(igs.total)}" style="font-weight: bold">${igs.total.toFixed(1)}</td>`;
+        html += `<td>${stats.confirmed}/${stats.total}</td>`;
+        html += '</tr>';
+    });
+
+    const avgIGS = calculateAverageIGS();
+    if (avgIGS) {
+        html += `<tr class="consensus-row">`;
+        html += `<td class="participant-name-cell"><strong>📊 Консенсус</strong></td>`;
+        CONFIG.parameterCategories.forEach(cat => {
+            const catValue = avgIGS.components[cat.id];
+            html += `<td>${catValue.toFixed(0)}</td>`;
+        });
+        html += `<td style="font-weight: bold; color: var(--accent)">${avgIGS.total.toFixed(1)}</td>`;
+        html += `<td>—</td>`;
+        html += '</tr>';
+    }
+
+    html += '</tbody>';
+    table.innerHTML = html;
 }
 
 function getIGSClass(value) {

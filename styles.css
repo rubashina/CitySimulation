@@ -618,6 +618,11 @@ h4 { font-size: 1rem; }
     margin-bottom: 2rem;
 }
 
+/* Captain Matrix (participant view) */
+.captain-matrix-section {
+    margin-bottom: 2rem;
+}
+
 .parameters-section h3 {
     margin-bottom: 1.5rem;
     color: var(--text-secondary);
