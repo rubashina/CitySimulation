@@ -31,6 +31,7 @@
                 <div class="login-tabs">
                     <button class="tab-btn active" data-tab="join">Присоединиться</button>
                     <button class="tab-btn" data-tab="create">Создать сессию</button>
+                    <button class="tab-btn" data-tab="display">Демонстрация</button>
                 </div>
                 
                 <div class="login-form" id="join-form">
@@ -86,6 +87,15 @@
                         <input type="text" id="session-code-input" placeholder="Авто" maxlength="6">
                     </div>
                     <button class="btn btn-accent" id="create-btn">🚀 Создать сессию</button>
+                </div>
+
+                <div class="login-form hidden" id="display-form">
+                    <div class="input-group">
+                        <label>Код сессии</label>
+                        <input type="text" id="display-session-code" placeholder="ABC123" maxlength="6">
+                    </div>
+                    <button class="btn btn-warning" id="display-join-btn">Войти в режим демонстрации</button>
+                    <div class="input-hint">Read-only экран: видно таймер, матрицу и графики. Фазу переключает только модератор.</div>
                 </div>
                 
                 <div class="demo-link">

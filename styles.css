@@ -354,6 +354,21 @@ h4 { font-size: 1rem; }
     border-radius: var(--radius-md);
 }
 
+.login-tabs .tab-btn {
+    min-width: 0;
+}
+
+/* Режим демонстрации: скрываем управляющие элементы модератора */
+body.display-mode #next-phase,
+body.display-mode #pause-btn,
+body.display-mode #export-menu-btn,
+body.display-mode #force-confirm-btn,
+body.display-mode #reset-all-btn,
+body.display-mode #unlock-all-btn,
+body.display-mode #add-bot-btn {
+    display: none !important;
+}
+
 .tab-btn {
     flex: 1;
     padding: 0.75rem 1rem;

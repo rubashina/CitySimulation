@@ -1118,6 +1118,7 @@ const state = {
         id: '',
         name: '',
         isModerator: false,
+        isDisplay: false,
         realRole: null,      // Реальная роль участника
         gameRole: null,      // Назначенная игровая роль
         team: null           // Назначенная команда
@@ -2025,6 +2026,7 @@ function initLoginScreen() {
             const tab = btn.dataset.tab;
             $('#join-form').classList.toggle('hidden', tab !== 'join');
             $('#create-form').classList.toggle('hidden', tab !== 'create');
+            $('#display-form').classList.toggle('hidden', tab !== 'display');
         });
     });
     
@@ -2097,6 +2099,85 @@ function initLoginScreen() {
     
     // Демо-режим
     $('#demo-btn').addEventListener('click', startDemo);
+
+    // Режим демонстрации (по коду сессии)
+    $('#display-join-btn')?.addEventListener('click', () => {
+        const btn = $('#display-join-btn');
+        if (btn?.dataset?.busy === '1') return;
+        if (btn) { btn.dataset.busy = '1'; btn.disabled = true; }
+        const code = $('#display-session-code')?.value?.trim()?.toUpperCase();
+        if (!code || code.length !== 6) {
+            showNotification('Введите корректный код сессии (6 символов)', 'error');
+            if (btn) { btn.dataset.busy = '0'; btn.disabled = false; }
+            return;
+        }
+        showNotification('Подключаю режим демонстрации…', 'info');
+        joinDisplaySession(code)
+            .catch(() => {})
+            .finally(() => {
+                if (btn) { btn.dataset.busy = '0'; btn.disabled = false; }
+            });
+    });
+}
+
+async function joinDisplaySession(code) {
+    const sessionCode = String(code || '').trim().toUpperCase();
+    if (!sessionCode || sessionCode.length !== 6) throw new Error('Bad code');
+
+    state.user.id = generateId();
+    state.user.name = 'Экран';
+    state.user.isModerator = true;   // используем модераторский UI, но отключаем управление
+    state.user.isDisplay = true;
+
+    // Загружаем данные сессии
+    if (firebaseEnabled) {
+        const sessionRef = firebaseDB.ref(`sessions/${sessionCode}`);
+        const snap = await retry(async () => (await sessionRef.once('value')).val(), { retries: 8, delayMs: 250 });
+        if (!snap) throw new Error('Session not found');
+
+        if (snap.session) {
+            const createdAt = snap.session.createdAt ? new Date(snap.session.createdAt) : null;
+            const { phase, ...rest } = snap.session;
+            state.session = { ...state.session, ...rest, createdAt };
+        }
+        state.session.code = sessionCode;
+        state.session.phase = typeof snap.phase === 'number' ? snap.phase : Number(snap.phase || 0);
+        state.session.timers = snap.timers || {};
+        // participants/teams подтянутся подпиской, но можно подстраховать
+        state.participants = snap.participants ? Object.values(snap.participants).map(p => ensureParticipantMeta(p)) : [];
+        state.teamsData = snap.teams || {};
+    } else {
+        initLocalSync();
+        const localSession = localReadSession(sessionCode);
+        if (!localSession) throw new Error('Local session not found');
+        if (localSession.session) {
+            const createdAt = localSession.session.createdAt ? new Date(localSession.session.createdAt) : null;
+            state.session = { ...state.session, ...localSession.session, createdAt };
+        }
+        state.session.code = sessionCode;
+        state.session.phase = typeof localSession.phase === 'number' ? localSession.phase : (state.session.phase || 0);
+        state.session.timers = localSession.timers || {};
+        state.participants = localSession.participants ? Object.values(localSession.participants).map(p => ensureParticipantMeta(p)) : [];
+        state.teamsData = localSession.teams || {};
+    }
+
+    // Параметры нужны для editor/матриц
+    state.parameters = getAllParameters();
+
+    subscribeToSession(sessionCode);
+    showScreen('moderator-screen');
+    initModeratorScreen();
+
+    // Упрощаем UI: скрываем управляющие кнопки
+    document.body.classList.add('display-mode');
+    $('#next-phase')?.setAttribute('disabled', 'true');
+    $('#pause-btn')?.classList.add('hidden');
+    $('#export-menu-btn')?.classList.add('hidden');
+    $('#force-confirm-btn')?.classList.add('hidden');
+    $('#reset-all-btn')?.classList.add('hidden');
+    $('#unlock-all-btn')?.classList.add('hidden');
+    $('#add-bot-btn')?.classList.add('hidden');
+    showNotification(`Демонстрация подключена: ${sessionCode}`, 'success');
 }
 
 async function joinSession(code, name, realRole) {
@@ -3060,6 +3141,7 @@ function initModeratorTabs() {
 
 // Управление фазами (только вперёд!)
 function initPhaseControls() {
+    if (state.user.isDisplay) return;
     $('#next-phase').addEventListener('click', () => {
         if (state.session.phase < CONFIG.phases.length - 1) {
             const oldPhase = state.session.phase;
@@ -3889,6 +3971,7 @@ function applyEventEffect(event) {
 
 // Действия модератора
 function initModeratorActions() {
+    if (state.user.isDisplay) return;
     // Добавить бота
     $('#add-bot-btn').addEventListener('click', () => {
         const usedNames = state.participants.map(p => p.name);
