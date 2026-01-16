@@ -1754,9 +1754,8 @@ function renderRoleCard() {
     if (gameRole && team) {
         const captainBadge = userIsCaptain ? ' 👑' : '';
         $('#role-name').textContent = `${gameRole.icon} ${gameRole.name}${captainBadge}`;
-        $('#role-desc').textContent = userIsCaptain 
-            ? 'Вы капитан команды! Управляйте ползунками параметров.' 
-            : gameRole.desc;
+        // В текущей версии управлять ползунками может любой участник в фазах ввода
+        $('#role-desc').textContent = gameRole.desc;
         $('#role-team').textContent = team.name + (userIsCaptain ? ' (капитан)' : '');
         $('#role-team').className = `role-team team-${team.id}`;
         roleCard.classList.remove('hidden');
@@ -1777,8 +1776,8 @@ function renderParameters() {
     const grid = $('#parameters-grid');
     grid.innerHTML = '';
     
-    // Проверяем, является ли пользователь капитаном
-    const userIsCaptain = isCaptain(state.user.id);
+    // В фазах ввода управлять ползунками может любой участник команды
+    const userCanEdit = true;
     const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
@@ -1820,14 +1819,14 @@ function renderParameters() {
             const teamParam = teamData?.parameters.find(p => p.id === param.id);
             const value = teamParam ? teamParam.value : param.default;
             
-            // Ползунок неактивен если не капитан или заблокирован
+            // Ползунок неактивен если не фаза ввода / подтверждено / заблокирован / исчерпан лимит ходов
             const alreadyUsedThisPhase = movesUsed.includes(param.id);
             const movesExhausted = movesRemaining <= 0;
             const blockedByMoveLimit = movesExhausted && !alreadyUsedThisPhase;
-            const isDisabled = !userIsCaptain || isLocked || !isInputPhase || !!teamData?.confirmed || blockedByMoveLimit;
+            const isDisabled = !userCanEdit || isLocked || !isInputPhase || !!teamData?.confirmed || blockedByMoveLimit;
             
             const card = document.createElement('div');
-            card.className = `param-card ${isLocked ? 'locked' : ''} ${!userIsCaptain ? 'readonly' : ''}`;
+            card.className = `param-card ${isLocked ? 'locked' : ''}`;
             card.style.borderLeftColor = category.color;
             
             const w = CONFIG.igsWeights?.[category.id] ?? 0;
@@ -1852,23 +1851,21 @@ function renderParameters() {
                         <span>${max}${param.unit}</span>
                     </div>
                 </div>
-                ${!userIsCaptain
-                    ? '<div class="param-notice">Только капитан может изменять</div>'
-                    : (!isInputPhase
-                        ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
-                        : (teamData?.confirmed
-                            ? '<div class="param-notice">Решение подтверждено — изменения заблокированы</div>'
-                            : (blockedByMoveLimit
-                                ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
-                                : (movesUsed.length > 0
-                                    ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
-                                    : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))))}
+                ${(!isInputPhase
+                    ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
+                    : (teamData?.confirmed
+                        ? '<div class="param-notice">Решение подтверждено — изменения заблокированы</div>'
+                        : (blockedByMoveLimit
+                            ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
+                            : (movesUsed.length > 0
+                                ? `<div class="param-notice">Осталось изменений: ${movesRemaining} из ${moveLimit}</div>`
+                                : `<div class="param-notice">Доступно изменений: ${moveLimit} за фазу</div>`))))}
             `;
             
             grid.appendChild(card);
             
-            // Обработчик слайдера (только для капитана)
-            if (userIsCaptain && !isLocked && isInputPhase && !teamData?.confirmed) {
+            // Обработчик слайдера (любой участник в фазах ввода)
+            if (!isLocked && isInputPhase && !teamData?.confirmed) {
                 const slider = card.querySelector(`#slider-${param.id}`);
                 slider.addEventListener('input', (e) => {
                     const newValue = parseInt(e.target.value);
@@ -2183,7 +2180,6 @@ function updateConfirmButton() {
     const statusEl = $('#confirm-status');
     if (!btn || !statusEl) return;
     
-    const userIsCaptain = isCaptain(state.user.id);
     const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
     const currentPhase = state.session.phase;
     
@@ -2193,13 +2189,6 @@ function updateConfirmButton() {
     if (!isInputPhase) {
         btn.disabled = true;
         statusEl.textContent = getPhaseStatusMessage(currentPhase);
-        return;
-    }
-    
-    // Только капитан может подтверждать решение команды
-    if (!userIsCaptain) {
-        btn.disabled = true;
-        statusEl.textContent = 'Только капитан может подтвердить решение команды';
         return;
     }
     
@@ -2223,12 +2212,6 @@ function updateConfirmButton() {
 }
 
 function confirmDecision() {
-    const userIsCaptain = isCaptain(state.user.id);
-    if (!userIsCaptain) {
-        showNotification('Только капитан может подтвердить решение', 'error');
-        return;
-    }
-    
     const teamData = state.user.team ? getTeamData(state.user.team.id) : null;
     if (teamData) {
         teamData.confirmed = true;
@@ -2560,16 +2543,8 @@ function applyPhaseLogic(phase) {
         console.log('🔄 Сброшены подтверждения команд для Раунда 2');
     }
     
-    // Блокируем/разблокируем ползунки (только для участников)
+    // Блокировки управляются в renderParameters(); тут только обновляем видимость кнопки/статуса
     if (!state.user.isModerator) {
-        const sliders = $$('.param-card .slider');
-        sliders.forEach(slider => {
-            if (!isCaptain(state.user.id)) {
-                slider.disabled = true; // Не капитан — всегда заблокирован
-            } else {
-                slider.disabled = !isInputPhase; // Капитан — только в раундах ввода
-            }
-        });
         
         // Визуально показываем статус ползунков
         $$('.param-card').forEach(card => {
