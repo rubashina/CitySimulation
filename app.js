@@ -4148,6 +4148,23 @@ function applyPhaseLogic(phase) {
     
     // Блокируем/разблокируем ползунки (только для участников)
     if (!state.user.isModerator) {
+        // =====================================================
+        // ВИЗУАЛЬНЫЙ LAYOUT УЧАСТНИКА ПО ФАЗАМ
+        // - Фазы принятия решений (1,4): показываем только ползунки
+        // - Фазы обсуждения/анализа (2,3,5): показываем паспорт/радар/конфликт
+        // =====================================================
+        const insightsSection = $('#insights-section');
+        const paramsSection = $('#parameters-section');
+        const confirmSection = document.querySelector('.confirm-section');
+        const igsPanel = $('#igs-panel'); // создаётся динамически
+        const mapSection = document.querySelector('.territory-map-section');
+
+        if (insightsSection) insightsSection.classList.toggle('hidden', isInputPhase);
+        if (paramsSection) paramsSection.classList.toggle('hidden', !isInputPhase);
+        if (confirmSection) confirmSection.classList.toggle('hidden', !isInputPhase);
+        if (igsPanel) igsPanel.classList.toggle('hidden', !isInputPhase);
+        if (mapSection) mapSection.classList.toggle('hidden', true); // чтобы в раундах не отвлекало и всё помещалось
+
         const sliders = $$('.param-card .slider');
         sliders.forEach(slider => {
             slider.disabled = !isInputPhase;
@@ -4158,16 +4175,21 @@ function applyPhaseLogic(phase) {
             card.classList.toggle('phase-locked', !isInputPhase);
         });
         
-        // Кнопка подтверждения
+        // Кнопка подтверждения (на всякий случай оставляем, но управляем секцией выше)
         const confirmBtn = $('#confirm-btn');
-        if (confirmBtn) {
-            confirmBtn.style.display = isInputPhase ? 'block' : 'none';
-        }
+        if (confirmBtn) confirmBtn.style.display = isInputPhase ? 'block' : 'none';
         
         // Обновляем сообщение о статусе фазы
         const confirmStatus = $('#confirm-status');
         if (confirmStatus) {
             confirmStatus.textContent = getPhaseStatusMessage(phase);
+        }
+
+        // Обновляем нужный контент при смене режима
+        if (isInputPhase) {
+            renderParameters();
+        } else {
+            renderParticipantInsights();
         }
     }
     

@@ -169,7 +169,8 @@ body {
 
 .passport-columns {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* Авто-адаптив: если места мало — колонки "моё/команда" становятся в столбик */
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 0.75rem;
 }
 
@@ -234,8 +235,13 @@ body {
 }
 
 .delta-item .name {
+    flex: 1 1 auto;
+    min-width: 0;
     color: var(--text-primary);
     font-size: 0.82rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .delta-item .val {
