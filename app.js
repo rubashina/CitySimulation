@@ -503,6 +503,7 @@ function subscribeToSession(sessionCode) {
         } else {
             // Обновим статус кнопки подтверждения и текст (решение могло стать "устаревшим")
             updateConfirmButton();
+            renderParticipantInsights();
         }
     });
     
@@ -539,6 +540,7 @@ function subscribeToSession(sessionCode) {
                 renderParameters();
                 renderCaptainMatrix();
                 updateConfirmButton();
+                renderParticipantInsights();
             }
         }
     });
@@ -561,6 +563,7 @@ function subscribeToSession(sessionCode) {
             if (!state.user.isModerator) {
                 renderParameters();    // ползунки
                 updateConfirmButton(); // кнопка
+                renderParticipantInsights();
                 showNotification(`Фаза ${phase}: ${CONFIG.phases[phase]?.name}`, 'success');
             }
             
@@ -595,6 +598,7 @@ function subscribeToSession(sessionCode) {
             applyEventEffect(event);
             renderParameters();
             updateConfirmButton();
+            renderParticipantInsights();
             showNotification(`Событие: ${event.name || 'изменение условий'}`, 'warning');
         }
     });
@@ -850,6 +854,14 @@ const CONFIG = {
         low: 4,
         medium: 6,
         high: 8
+    },
+
+    // Поправка лимита "ходов" под масштаб проекта (мягко, чтобы не ломать баланс)
+    // Идея: на крупном объекте чуть больше свободы выбора параметров, на малом — чуть меньше.
+    moveLimitAdjustByProjectScale: {
+        small: -1,
+        medium: 0,
+        large: 1
     },
     
     // Стоимость изменения параметров (очков за +10 единиц)
@@ -2107,9 +2119,24 @@ function ensureUserDraftInitialized() {
     if (state.userDraft.phase !== decisionPhase || !Array.isArray(state.userDraft.parameters) || state.userDraft.parameters.length === 0) {
         const me = getParticipantById(state.user.id);
         const rec = me ? getParticipantConfirmation(me, decisionPhase) : null;
-        const base = (rec?.confirmed && Array.isArray(rec.parameters) && rec.parameters.length > 0)
-            ? rec.parameters
-            : getDefaultParameterVector();
+        let base = null;
+        // Для 2-го раунда (decisionPhase=4) логично начинать с итогов раунда 1, если раунд 2 ещё не подтверждён.
+        if (decisionPhase === 4) {
+            const rec4 = rec;
+            if (rec4?.confirmed && Array.isArray(rec4.parameters) && rec4.parameters.length > 0) {
+                base = rec4.parameters;
+            } else {
+                const rec1 = me ? getParticipantConfirmation(me, 1) : null;
+                if (rec1?.confirmed && Array.isArray(rec1.parameters) && rec1.parameters.length > 0) {
+                    base = rec1.parameters;
+                }
+            }
+        } else {
+            if (rec?.confirmed && Array.isArray(rec.parameters) && rec.parameters.length > 0) {
+                base = rec.parameters;
+            }
+        }
+        if (!base) base = getDefaultParameterVector();
 
         state.userDraft.phase = decisionPhase;
         state.userDraft.parameters = cloneParamVector(base);
@@ -2478,14 +2505,14 @@ async function joinSession(code, name, realRole) {
                 const snapshot = await sessionRef.once('value');
                 return snapshot.val();
             }, { retries: 8, delayMs: 250 });
-
+            
             if (!sessionData) {
                 showNotification('Сессия не найдена! Проверьте код.', 'error');
                 throw new Error('Session not found');
             }
-
+            
             console.log('✅ Сессия найдена:', sessionData);
-
+            
             // Загружаем данные сессии
             if (sessionData.session) {
                 // Игнорируем session.phase — фазу берём из sessionData.phase (root)
@@ -2495,7 +2522,7 @@ async function joinSession(code, name, realRole) {
             }
             state.session.code = code;
             state.session.phase = sessionData.phase || 0;
-
+            
             // Теперь подключаем участника
             await completeJoinSession(code, name, realRole);
             return true;
@@ -2579,8 +2606,8 @@ async function completeJoinSession(code, name, realRole) {
 
     // Новый участник
     state.user.id = generateId();
-    // Теперь добавляем себя
-    completeJoinSessionStep2(code, name, realRole);
+            // Теперь добавляем себя
+        completeJoinSessionStep2(code, name, realRole);
 }
 
 function completeJoinSessionStep2(code, name, realRole) {
@@ -2689,8 +2716,8 @@ async function createSession(sessionName, moderatorName, customCode = '', projec
     await saveSessionToFirebase();
     
     // Подписываемся на обновления ПОСЛЕ сохранения
-    console.log('📡 Подписываюсь на сессию как модератор');
-    subscribeToSession(code);
+        console.log('📡 Подписываюсь на сессию как модератор');
+        subscribeToSession(code);
     
     showScreen('moderator-screen');
     initModeratorScreen();
@@ -2715,6 +2742,7 @@ function initParticipantScreen() {
     loadUserDraftFromStorage();
     renderParameters();
     renderCaptainMatrix();
+    renderParticipantInsights();
     initHistoryPanel();
     initTerritoryMapControls();
     
@@ -2740,6 +2768,17 @@ function initParticipantScreen() {
     
     // Кнопка подтверждения
     $('#confirm-btn').addEventListener('click', confirmDecision);
+}
+
+function renderParticipantInsights() {
+    if (state.user.isModerator || state.user.isDisplay) return;
+    try {
+        renderDecisionPassport();
+        renderParticipantTeamsRadar();
+        renderParticipantConflictBreakdown();
+    } catch (e) {
+        console.warn('Participant insights render error:', e);
+    }
 }
 
 function renderRoleCard() {
@@ -2786,7 +2825,7 @@ function renderParameters() {
     const draftParams = getUserDraftParameters();
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
-    const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+    const moveLimit = getMoveLimit();
     // Счётчик изменений = сколько параметров сейчас НЕ на дефолте (а не "сколько трогали")
     const defById = getDefaultValuesById();
     const movedIds = getMovedParamIds(draftParams);
@@ -2854,7 +2893,7 @@ function renderParameters() {
                 <div class="param-header">
                     <span class="param-name">${param.name}</span>
                     <span class="param-value-wrap">
-                        <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
+                    <span class="param-value" id="value-${param.id}">${value}${param.unit}</span>
                         <button type="button"
                                 class="param-reset-btn"
                                 data-param="${param.id}"
@@ -2876,9 +2915,9 @@ function renderParameters() {
                     </div>
                 </div>
                 ${!isInputPhase
-                    ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
-                    : (blockedByMoveLimit
-                        ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
+                        ? '<div class="param-notice">Изменения доступны только в фазах 1 и 4</div>'
+                            : (blockedByMoveLimit
+                                ? `<div class="param-notice">Лимит изменений на фазу исчерпан (${moveLimit}).</div>`
                         : `<div class="param-notice">Изменено параметров: ${movedCount} / ${moveLimit} • осталось: ${movesRemaining}</div>`)}
             `;
             
@@ -2912,7 +2951,7 @@ function renderParameters() {
                 slider.addEventListener('input', (e) => {
                     const newValue = parseInt(e.target.value);
 
-                    const limit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+                    const limit = getMoveLimit();
                     const vec = getUserDraftParameters();
                     const entry = vec.find(p => p.id === param.id);
                     if (!entry) return;
@@ -2933,6 +2972,18 @@ function renderParameters() {
                     
                     // Обновляем личный черновик
                     entry.value = newValue;
+
+                    // Бюджет как "фишки": если бюджета не хватает — откатываем ход
+                    const budgetUsedNow = calculateBudgetUsed(vec);
+                    if (budgetUsedNow > state.session.budgetTotal) {
+                        entry.value = prevValue;
+                        e.target.value = String(prevValue);
+                        card.querySelector(`#value-${param.id}`).textContent = prevValue + param.unit;
+                        showNotification(`Недостаточно бюджета: ${budgetUsedNow} / ${state.session.budgetTotal}. Уменьшите изменения.`, 'warning');
+                        updateIGSDisplay();
+                        updateConfirmButton();
+                        return;
+                    }
                     
                     // Обновляем ИГС в реальном времени
                     updateIGSDisplay();
@@ -3106,7 +3157,14 @@ function calculateBudgetUsed(parameters) {
         }
     });
     
-    return Math.round(cost);
+    // Без отрицательного бюджета (даже если какие-то изменения дают "экономию")
+    return Math.max(0, Math.round(cost));
+}
+
+function getMoveLimit() {
+    const base = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
+    const adj = CONFIG.moveLimitAdjustByProjectScale?.[state.session.projectScale] ?? 0;
+    return Math.max(1, Math.round(Number(base) + Number(adj)));
 }
 
 // Обновление Hero-дисплея ИГС (как в En-ROADS)
@@ -3117,17 +3175,12 @@ function updateIGSHero() {
     const igsHero = $('#igs-hero');
     
     if (!heroValue) return;
-
+    
     const params = getUserDraftParameters();
     if (!params) return;
     
     const igs = calculateIGS(params);
-    // Бюджет как ограничение "ходов": сколько разных ползунков можно тронуть за фазу ввода
-    const moveLimit = CONFIG.moveLimitsByBudgetLevel?.[state.session.budgetLevel] ?? 6;
-    const currentPhase = Number(state.session.phase);
-    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
-    const movedCount = getMovedCount(params);
-    const budgetUsed = isInputPhase ? Math.round((movedCount / Math.max(1, moveLimit)) * state.session.budgetTotal) : calculateBudgetUsed(params);
+    const budgetUsed = calculateBudgetUsed(params);
     const budgetTotal = state.session.budgetTotal;
     
     heroValue.textContent = igs.total.toFixed(1);
@@ -3153,6 +3206,419 @@ function updateIGSHero() {
     }
 }
 
+function getPassportPhase() {
+    const preferred = Number(state.ui?.passportPhase);
+    if (preferred === 1 || preferred === 4) return preferred;
+    const me = getParticipantById(state.user.id);
+    const has4 = !!getParticipantConfirmation(me, 4)?.confirmed;
+    if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+    state.ui.passportPhase = has4 ? 4 : 1;
+    return state.ui.passportPhase;
+}
+
+function setPassportPhase(phase) {
+    const p = Number(phase);
+    if (p !== 1 && p !== 4) return;
+    if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+    state.ui.passportPhase = p;
+}
+
+function getBadgeClassForConflictGradeText(text) {
+    const t = String(text || '').toLowerCase();
+    if (t.includes('отлич')) return 'excellent';
+    if (t.includes('хорош')) return 'good';
+    if (t.includes('сред')) return 'ok';
+    if (t.includes('очень')) return 'terrible';
+    if (t.includes('плох')) return 'bad';
+    return 'ok';
+}
+
+function formatDelta(value) {
+    const v = Number(value);
+    if (!Number.isFinite(v) || v === 0) return '0';
+    if (v > 0) return `+${Math.round(v)}`;
+    return `${Math.round(v)}`;
+}
+
+function computeParamDeltasFromDefault(params) {
+    const all = getAllParameters();
+    const byId = new Map((params || []).map(p => [p.id, Number(p.value)]));
+    return all.map(def => {
+        const val = byId.has(def.id) ? byId.get(def.id) : def.default;
+        const delta = Number(val) - Number(def.default);
+        return {
+            id: def.id,
+            name: def.name,
+            unit: def.unit || '',
+            default: Number(def.default),
+            value: Number(val),
+            delta,
+            categoryId: def.categoryId
+        };
+    }).filter(x => Number.isFinite(x.delta) && x.delta !== 0);
+}
+
+function renderDecisionPassport() {
+    const tabs = $('#passport-tabs');
+    const body = $('#passport-body');
+    if (!tabs || !body) return;
+
+    const me = getParticipantById(state.user.id);
+    if (!me || !state.user.team?.id) {
+        body.innerHTML = `<div class="empty-state-inline">—</div>`;
+        return;
+    }
+
+    const activePhase = getPassportPhase();
+    tabs.querySelectorAll('.segmented-btn').forEach(btn => {
+        const p = Number(btn.dataset.phase);
+        btn.classList.toggle('active', p === activePhase);
+    });
+    if (!tabs.dataset.bound) {
+        tabs.dataset.bound = '1';
+        tabs.addEventListener('click', (e) => {
+            const btn = e.target?.closest?.('.segmented-btn');
+            if (!btn) return;
+            setPassportPhase(btn.dataset.phase);
+            renderParticipantInsights();
+        });
+    }
+
+    const myRec = getParticipantConfirmation(me, activePhase);
+    const myParams = (myRec?.confirmed && Array.isArray(myRec.parameters)) ? myRec.parameters : null;
+    const teamParams = getTeamAggregateParameters(state.user.team.id, activePhase);
+
+    const D = calculateConflict(activePhase);
+    const myIGS = myParams ? calculateIGS(myParams, D) : null;
+    const teamIGS = teamParams ? calculateIGS(teamParams, D) : null;
+
+    const far = getMostDistantTeam(state.user.team.id, activePhase);
+
+    const myDeltas = myParams ? computeParamDeltasFromDefault(myParams) : [];
+    const teamDeltas = teamParams ? computeParamDeltasFromDefault(teamParams) : [];
+    const sortByAbsDeltaDesc = (arr) => (arr || []).sort((a, b) => Math.abs(Number(b.delta)) - Math.abs(Number(a.delta)));
+    sortByAbsDeltaDesc(myDeltas);
+    sortByAbsDeltaDesc(teamDeltas);
+
+    const myBudgetUsed = calculateBudgetUsed(myParams || getUserDraftParameters());
+
+    const renderDeltaList = (deltas) => {
+        if (!deltas.length) return `<div class="empty-state-inline">Нет изменений относительно дефолта</div>`;
+        const items = deltas.slice(0, 10);
+        const more = deltas.length - items.length;
+        const html = items.map(it => {
+            const cls = it.delta > 0 ? 'up' : 'down';
+            return `
+                <div class="delta-item" data-tooltip="${it.name}: ${it.default}${it.unit} → ${it.value}${it.unit}">
+                    <div class="name">${it.name}</div>
+                    <div class="val"><span class="${cls}">${formatDelta(it.delta)}</span></div>
+                </div>
+            `;
+        }).join('');
+        return html + (more > 0 ? `<div class="empty-state-inline">…и ещё ${more}</div>` : '');
+    };
+
+    const conflictGrade = getConflictGradeText(D);
+    const conflictBadge = getBadgeClassForConflictGradeText(conflictGrade);
+
+    const conflictWithHtml = far?.team
+        ? `<div class="passport-conflict-hint">⚡ Конфликт с <b>${far.team.name}</b> • разрыв в <b>${far.maxCat?.name || 'категории'}</b></div>`
+        : '';
+
+    body.innerHTML = `
+        <div class="passport-col">
+            <div class="passport-col-title">
+                <div class="label">Моё решение</div>
+                <span class="badge ${conflictBadge}" data-tooltip="Конфликт D: ${D.toFixed(1)}">${conflictGrade}</span>
+            </div>
+            <div class="passport-metrics">
+                <span class="metric-chip" data-tooltip="ИГС по вашему подтверждённому решению">
+                    ИГС <span class="num">${myIGS ? myIGS.total.toFixed(1) : '—'}</span>
+                </span>
+                <span class="metric-chip" data-tooltip="Сколько бюджета тратится текущим (подтверждённым) решением; при откате к дефолту бюджет возвращается">
+                    💰 Бюджет <span class="num">${myBudgetUsed}</span> / <span class="num">${state.session.budgetTotal}</span>
+                </span>
+                <span class="metric-chip" data-tooltip="Сколько параметров отличается от дефолта">
+                    Изменено <span class="num">${myDeltas.length}</span>
+                </span>
+            </div>
+            ${conflictWithHtml}
+            <div class="delta-list">
+                ${myParams ? renderDeltaList(myDeltas) : `<div class="empty-state-inline">Подтвердите решение в раунде ${activePhase === 1 ? '1' : '2'}, чтобы появился паспорт</div>`}
+            </div>
+        </div>
+        <div class="passport-col">
+            <div class="passport-col-title">
+                <div class="label">Решение команды</div>
+                <span class="metric-chip" data-tooltip="Агрегат команды по подтверждённым личным решениям участников">агрегат</span>
+            </div>
+            <div class="passport-metrics">
+                <span class="metric-chip" data-tooltip="ИГС по агрегированному решению команды">
+                    ИГС <span class="num">${teamIGS ? teamIGS.total.toFixed(1) : '—'}</span>
+                </span>
+                <span class="metric-chip" data-tooltip="Конфликт (D) между командами в этом раунде">
+                    D <span class="num">${D.toFixed(1)}</span>
+                </span>
+                <span class="metric-chip" data-tooltip="Сколько параметров в агрегате команды отличается от дефолта">
+                    Изменено <span class="num">${teamDeltas.length}</span>
+                </span>
+            </div>
+            <div class="delta-list">
+                ${renderDeltaList(teamDeltas)}
+            </div>
+        </div>
+    `;
+}
+
+function computeTeamCategoryVector(teamId, phase) {
+    const params = getTeamAggregateParameters(teamId, phase);
+    const vec = {};
+    CONFIG.parameterCategories.forEach(cat => {
+        vec[cat.id] = calculateCategoryValue(cat.id, params);
+    });
+    return vec;
+}
+
+function teamDistance(aVec, bVec) {
+    let sum = 0;
+    CONFIG.parameterCategories.forEach(cat => {
+        const a = Number(aVec?.[cat.id] ?? 0);
+        const b = Number(bVec?.[cat.id] ?? 0);
+        sum += Math.abs(a - b);
+    });
+    return sum;
+}
+
+function getMostDistantTeam(myTeamId, phase) {
+    const teams = getActiveTeams();
+    if (teams.length <= 1) return null;
+    const myVec = computeTeamCategoryVector(myTeamId, phase);
+    let best = null;
+    teams.forEach(t => {
+        if (t.id === myTeamId) return;
+        const v = computeTeamCategoryVector(t.id, phase);
+        const dist = teamDistance(myVec, v);
+        if (!best || dist > best.dist) best = { team: t, dist, vec: v, myVec };
+    });
+    if (!best) return null;
+    let maxCat = null;
+    let maxAbs = -Infinity;
+    CONFIG.parameterCategories.forEach(cat => {
+        const d = Math.abs(Number(best.myVec[cat.id]) - Number(best.vec[cat.id]));
+        if (d > maxAbs) { maxAbs = d; maxCat = cat; }
+    });
+    best.maxCat = maxCat;
+    best.maxAbs = maxAbs;
+    return best;
+}
+
+function renderParticipantTeamsRadar() {
+    const canvas = $('#participant-radar-canvas');
+    const hint = $('#radar-hint');
+    const legendEl = $('#radar-legend');
+    if (!canvas || !hint) return;
+    if (!state.user.team?.id) {
+        hint.textContent = '—';
+        if (legendEl) legendEl.innerHTML = '';
+        return;
+    }
+
+    const phase = getDecisionPhaseForUI(state.session.phase);
+    const teams = getActiveTeams();
+    if (!teams.length) {
+        hint.textContent = '—';
+        return;
+    }
+
+    const labels = CONFIG.parameterCategories.map(c => c.name);
+    const myTeamId = state.user.team.id;
+    const far = getMostDistantTeam(myTeamId, phase);
+
+    const datasets = teams.map(t => {
+        const vec = computeTeamCategoryVector(t.id, phase);
+        const data = CONFIG.parameterCategories.map(c => Number(vec[c.id] ?? 0));
+        const isMine = t.id === myTeamId;
+        const isFar = far?.team?.id === t.id;
+        const baseColor = String(t.color || '#3b82f6');
+        const border = isMine ? 'rgba(6, 214, 160, 0.95)' : (isFar ? 'rgba(239, 68, 68, 0.9)' : baseColor);
+        const width = isMine ? 3 : (isFar ? 3 : 1.5);
+        const fill = isMine ? 'rgba(6, 214, 160, 0.08)' : (isFar ? 'rgba(239, 68, 68, 0.06)' : 'rgba(255,255,255,0.02)');
+        return {
+            label: t.name,
+            data,
+            borderColor: border,
+            backgroundColor: fill,
+            borderWidth: width,
+            pointRadius: 0,
+            tension: 0.2
+        };
+    });
+
+    // Легенда команд (компактно, все команды сразу)
+    if (legendEl) {
+        legendEl.innerHTML = '';
+        teams.forEach(t => {
+            const isMine = t.id === myTeamId;
+            const isFar = far?.team?.id === t.id;
+            const baseColor = String(t.color || '#3b82f6');
+
+            const pill = document.createElement('span');
+            pill.className = `team-pill${isMine ? ' mine' : ''}${isFar ? ' far' : ''}`;
+            pill.style.setProperty('--team-color', baseColor);
+            if (isFar) {
+                pill.setAttribute('data-tooltip', `Самый сильный конфликт: ${t.name} • разрыв в категории ${far?.maxCat?.name || '—'}`);
+            } else {
+                pill.setAttribute('data-tooltip', t.name);
+            }
+
+            const dot = document.createElement('span');
+            dot.className = 'dot';
+
+            const name = document.createElement('span');
+            name.className = 'name';
+            name.textContent = t.name;
+
+            pill.appendChild(dot);
+            pill.appendChild(name);
+
+            if (isMine) {
+                const tag = document.createElement('span');
+                tag.className = 'tag';
+                tag.textContent = 'вы';
+                pill.appendChild(tag);
+            }
+            if (isFar) {
+                const tag = document.createElement('span');
+                tag.className = 'tag';
+                tag.textContent = 'конфликт';
+                pill.appendChild(tag);
+            }
+
+            legendEl.appendChild(pill);
+        });
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    if (!state.charts) state.charts = {};
+    if (state.charts.participantRadar) {
+        state.charts.participantRadar.data.labels = labels;
+        state.charts.participantRadar.data.datasets = datasets;
+        state.charts.participantRadar.update();
+    } else {
+        state.charts.participantRadar = new Chart(ctx, {
+            type: 'radar',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => `${c.dataset.label}: ${Number(c.raw).toFixed(0)}`
+                        }
+                    }
+                },
+                scales: {
+                    r: {
+                        min: 0,
+                        max: 100,
+                        ticks: { display: false },
+                        grid: { color: 'rgba(255,255,255,0.08)' },
+                        angleLines: { color: 'rgba(255,255,255,0.08)' },
+                        pointLabels: { color: 'rgba(243,244,246,0.85)', font: { size: 11 } }
+                    }
+                }
+            }
+        });
+    }
+
+    if (far?.team) {
+        hint.innerHTML = `Самый сильный конфликт: <b>${far.team.name}</b> • максимальный разрыв в категории <b>${far.maxCat?.name || '—'}</b>`;
+    } else {
+        hint.textContent = '—';
+    }
+}
+
+function computeCategorySpreads(phase) {
+    const teams = getActiveTeams();
+    if (teams.length <= 1) return [];
+    const perTeam = teams.map(t => ({
+        team: t,
+        comps: computeTeamCategoryVector(t.id, phase)
+    }));
+    return CONFIG.parameterCategories.map(cat => {
+        const vals = perTeam.map(x => Number(x.comps[cat.id] ?? 0)).filter(v => Number.isFinite(v));
+        const sd = stddev(vals);
+        return { cat, sd };
+    }).sort((a, b) => b.sd - a.sd);
+}
+
+function computeTopConflictingParamInCategory(categoryId, phase) {
+    const teams = getActiveTeams();
+    if (teams.length <= 1) return null;
+    const cat = CONFIG.parameterCategories.find(c => c.id === categoryId);
+    if (!cat) return null;
+    const byTeam = teams.map(t => ({
+        team: t,
+        params: getTeamAggregateParameters(t.id, phase)
+    }));
+    const allParams = getAllParameters();
+    const defs = cat.params.map(p => allParams.find(d => d.id === p.id)).filter(Boolean);
+    let best = null;
+    defs.forEach(def => {
+        const vals = byTeam.map(x => x.params.find(p => p.id === def.id)?.value).filter(v => typeof v === 'number' && Number.isFinite(v));
+        const sd = stddev(vals);
+        const min = vals.length ? Math.min(...vals) : null;
+        const max = vals.length ? Math.max(...vals) : null;
+        if (!best || sd > best.sd) best = { def, sd, min, max };
+    });
+    return best;
+}
+
+function renderParticipantConflictBreakdown() {
+    const summary = $('#conflict-summary');
+    const catsEl = $('#conflict-cats');
+    if (!summary || !catsEl) return;
+    const phase = getDecisionPhaseForUI(state.session.phase);
+    const D = calculateConflict(phase);
+    const grade = getConflictGradeText(D);
+    const badgeCls = getBadgeClassForConflictGradeText(grade);
+
+    summary.innerHTML = `
+        <div class="conflict-d">
+            <div>Конфликт D</div>
+            <div class="num">${D.toFixed(1)}</div>
+        </div>
+        <span class="badge ${badgeCls}">${grade}</span>
+    `;
+
+    const spreads = computeCategorySpreads(phase);
+    if (!spreads.length) {
+        catsEl.innerHTML = `<div class="empty-state-inline">Недостаточно команд для расчёта конфликта</div>`;
+        return;
+    }
+
+    catsEl.innerHTML = spreads.slice(0, 6).map(({ cat, sd }) => {
+        const g = getConflictGradeText(sd);
+        const cls = getBadgeClassForConflictGradeText(g);
+        const topParam = computeTopConflictingParamInCategory(cat.id, phase);
+        const range = (topParam && topParam.min !== null && topParam.max !== null) ? `${Math.round(topParam.min)}–${Math.round(topParam.max)}` : '—';
+        const hint = topParam ? `${topParam.def.name}: σ ${topParam.sd.toFixed(1)} (диапазон ${range})` : '—';
+        return `
+            <div class="conflict-cat" data-tooltip="${cat.name}: σ ${sd.toFixed(1)} • ${hint}">
+                <div class="left">
+                    <div class="title"><span>${cat.icon}</span><span>${cat.name}</span></div>
+                    <div class="sub">${topParam ? `Самый спорный параметр: ${topParam.def.name} (${range})` : '—'}</div>
+                </div>
+                <span class="badge ${cls}">σ ${sd.toFixed(1)}</span>
+            </div>
+        `;
+    }).join('');
+}
+
 function updateIGSDisplay() {
     renderIGSPanel();
     updateIGSHero();
@@ -3166,7 +3632,7 @@ function updateIGSDisplay() {
 function updateTerritoryMap() {
     const mapSvg = $('#map-svg');
     if (!mapSvg) return;
-
+    
     const params = getUserDraftParameters();
     if (!params) return;
     
@@ -3277,7 +3743,7 @@ function updateConfirmButton() {
         statusEl.textContent = getPhaseStatusMessage(currentPhase);
         return;
     }
-
+    
     const me = getParticipantById(state.user.id);
     if (!me) {
         btn.disabled = true;
@@ -3288,6 +3754,14 @@ function updateConfirmButton() {
     const rec = getParticipantConfirmation(me, currentPhase);
     const draft = getUserDraftParameters();
     const confirmedSameAsDraft = !!(rec?.confirmed && Array.isArray(rec.parameters) && areParamVectorsEqual(rec.parameters, draft));
+
+    // Бюджет как "фишки": нельзя подтвердить, если превышен бюджет
+    const budgetUsedNow = calculateBudgetUsed(draft);
+    if (budgetUsedNow > state.session.budgetTotal) {
+        btn.disabled = true;
+        statusEl.textContent = `Превышен бюджет: ${budgetUsedNow} / ${state.session.budgetTotal}. Уменьшите изменения.`;
+        return;
+    }
 
     if (confirmedSameAsDraft) {
         btn.disabled = true;
@@ -3332,6 +3806,8 @@ function confirmDecision() {
 
     // Обновим UI после подтверждения
     renderParameters();
+    renderParticipantInsights();
+    renderParticipantInsights();
 
     addToHistory('Подтвердили своё решение');
     addToLog('confirm', `${state.user.name} подтвердил(а) решение (${state.user.team?.name || 'команда'})`);
@@ -4922,11 +5398,11 @@ function generatePDF(report) {
         (t.members || []).forEach(p => {
             const captain = p.isCaptain ? ' (captain)' : '';
             doc.text(`${translitRuToLat(p.name)}${captain} - ${translitRuToLat(t.name)}`, 25, y);
-            y += 6;
-            if (y > 270) {
-                doc.addPage();
-                y = 20;
-            }
+        y += 6;
+        if (y > 270) {
+            doc.addPage();
+            y = 20;
+        }
         });
     });
     

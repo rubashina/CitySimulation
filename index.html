@@ -288,6 +288,55 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Инсайты участника: паспорт решений + сравнение команд -->
+                <div class="insights-section" id="insights-section">
+                    <div class="section-header">
+                        <h3>🎮 Ваши решения и сравнение команд</h3>
+                        <span class="input-hint">Чтобы помнить своё решение и видеть конфликт</span>
+                    </div>
+                    <div class="insights-grid" id="participant-insights-grid">
+                        <div class="insight-card passport-card" id="passport-card">
+                            <div class="insight-card-header">
+                                <div class="insight-title">🪪 Паспорт решений</div>
+                                <div class="segmented" id="passport-tabs">
+                                    <button type="button" class="segmented-btn" data-phase="1">Раунд 1</button>
+                                    <button type="button" class="segmented-btn" data-phase="4">Раунд 2</button>
+                                </div>
+                            </div>
+                            <div class="passport-columns" id="passport-body">
+                                <!-- Генерируется JS -->
+                            </div>
+                        </div>
+
+                        <div class="insight-card radar-card" id="radar-card">
+                            <div class="insight-card-header">
+                                <div class="insight-title">🧭 Радар команд</div>
+                                <div class="input-hint">Категории • все команды</div>
+                            </div>
+                            <div class="radar-wrap">
+                                <canvas id="participant-radar-canvas" width="420" height="320"></canvas>
+                            </div>
+                            <div class="radar-legend" id="radar-legend">
+                                <!-- Генерируется JS -->
+                            </div>
+                            <div class="radar-hint" id="radar-hint">—</div>
+                        </div>
+
+                        <div class="insight-card conflict-card" id="conflict-card">
+                            <div class="insight-card-header">
+                                <div class="insight-title">⚡ Конфликт</div>
+                                <div class="input-hint">D и расхождения по категориям</div>
+                            </div>
+                            <div class="conflict-summary" id="conflict-summary">
+                                <!-- Генерируется JS -->
+                            </div>
+                            <div class="conflict-cats" id="conflict-cats">
+                                <!-- Генерируется JS -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 
                 <!-- Параметры -->
                 <div class="parameters-section" id="parameters-section">
