@@ -2000,15 +2000,44 @@ function computeTopConflictingParameters(limit = 5) {
     }));
 
     const scores = allParams.map(def => {
-        const vals = byTeam.map(x => x.params.find(p => p.id === def.id)?.value).filter(v => typeof v === 'number' && Number.isFinite(v));
+        const teamVals = byTeam
+            .map(x => ({ team: x.team, value: x.params.find(p => p.id === def.id)?.value }))
+            .filter(x => typeof x.value === 'number' && Number.isFinite(x.value));
+        const vals = teamVals.map(x => x.value);
         const sd = stddev(vals);
         const min = vals.length ? Math.min(...vals) : null;
         const max = vals.length ? Math.max(...vals) : null;
-        return { id: def.id, name: def.name, sd, min, max };
+        const minTeam = (min === null) ? null : (teamVals.find(x => x.value === min)?.team || null);
+        const maxTeam = (max === null) ? null : (teamVals.find(x => x.value === max)?.team || null);
+        const spread = (min === null || max === null) ? null : (max - min);
+        return { id: def.id, name: def.name, sd, min, max, spread, minTeam, maxTeam };
     });
 
     scores.sort((a, b) => b.sd - a.sd);
     return scores.slice(0, limit);
+}
+
+function getCompromiseTipForParam(paramId) {
+    const id = String(paramId || '');
+    // Короткие “скрипты модератора”: что на что менять.
+    switch (id) {
+        case 'N':
+        case 'Af':
+            return 'Торг: больше функций/оживлённости ↔ гарантии тишины (L) и ниже автотрафик (Tp).';
+        case 'L':
+            return 'Торг: согласовать минимальный “порог тишины” ↔ разрешить немного активностей (N/Af) в одной зоне/в одно время.';
+        case 'Ca':
+            return 'Торг: меньше асфальта ↔ лучше связность/маршруты (Pt) и “твёрдые” коридоры только там, где нужно.';
+        case 'Tp':
+            return 'Торг: ниже автотрафик ↔ компенсировать доступностью: ОТ/пешие связи (M, Pt) и вело (B).';
+        case 'As':
+            return 'Торг: сильнее участие жителей ↔ фиксированные правила и управляемость (V/O) без “вечных обсуждений”.';
+        case 'Z':
+        case 'Tg':
+            return 'Торг: больше зелени/тени ↔ часть функций (N) допускается, но без роста автотрафика (Tp).';
+        default:
+            return 'Торг: “встречаемся в середине” + обмен одной уступки на 1–2 приоритетных параметра другой стороны.';
+    }
 }
 
 function getConflictingCategoryIds() {
@@ -2032,13 +2061,36 @@ function renderTopConflictParams() {
     }
     container.innerHTML = items.map(it => {
         const range = (it.min !== null && it.max !== null) ? `${Math.round(it.min)}–${Math.round(it.max)}` : '—';
+        const between = (it.minTeam && it.maxTeam && it.min !== null && it.max !== null)
+            ? `${it.minTeam.name}: ${Math.round(it.min)} ↔ ${it.maxTeam.name}: ${Math.round(it.max)}`
+            : null;
         return `
             <div class="conflict-param-item" data-tooltip="${it.name}: разброс ${it.sd.toFixed(1)} (диапазон ${range})">
-                <div class="conflict-param-name">${it.name}</div>
+                <div>
+                    <div class="conflict-param-name">${it.name}</div>
+                    ${between ? `<div class="conflict-param-between">${between}</div>` : ''}
+                </div>
                 <div class="conflict-param-spread">σ ${it.sd.toFixed(1)}</div>
             </div>
         `;
     }).join('');
+
+    const tips = $('#compromise-hints-list');
+    if (tips) {
+        tips.innerHTML = items.map(it => {
+            const a = it.minTeam?.name || '—';
+            const b = it.maxTeam?.name || '—';
+            const spread = (it.spread === null) ? '—' : `${Math.round(it.spread)}`;
+            const mid = (it.min !== null && it.max !== null) ? Math.round((it.min + it.max) / 2) : null;
+            const tip = getCompromiseTipForParam(it.id);
+            return `
+                <div class="compromise-item">
+                    <div class="line1"><b>${it.name}</b>: конфликт ${a} ↔ ${b} (Δ ${spread}${mid !== null ? `, цель ~${mid}` : ''})</div>
+                    <div class="line2">${tip}</div>
+                </div>
+            `;
+        }).join('');
+    }
 }
 
 // =====================================================

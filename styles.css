@@ -1688,6 +1688,60 @@ body.display-mode #add-bot-btn {
     white-space: nowrap;
 }
 
+.conflict-param-between {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    margin-top: 0.15rem;
+}
+
+.compromise-hints {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(239, 68, 68, 0.18);
+}
+
+.compromise-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.25rem;
+}
+
+.compromise-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.compromise-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.compromise-item {
+    padding: 0.625rem 0.75rem;
+    background: rgba(239, 68, 68, 0.06);
+    border: 1px dashed rgba(239, 68, 68, 0.25);
+    border-radius: var(--radius-sm);
+}
+
+.compromise-item .line1 {
+    font-size: 0.8125rem;
+    color: var(--text-primary);
+    line-height: 1.25;
+    margin-bottom: 0.25rem;
+}
+
+.compromise-item .line2 {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.25;
+}
+
 .consensus-bar {
     height: 8px;
     background: var(--bg-tertiary);
