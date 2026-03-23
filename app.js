@@ -2167,6 +2167,40 @@ function draftStorageKey(code, participantId, decisionPhase) {
     return `${LOCAL_SYNC.storagePrefix}draft:${String(code || '').toUpperCase()}:${participantId}:${decisionPhase}`;
 }
 
+function normalizePersonName(name) {
+    return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function rejoinPointerKey(code, name) {
+    return `${LOCAL_SYNC.storagePrefix}rejoin:${String(code || '').toUpperCase()}:${normalizePersonName(name)}`;
+}
+
+function loadRejoinParticipantId(code, name) {
+    try {
+        return localStorage.getItem(rejoinPointerKey(code, name)) || null;
+    } catch {
+        return null;
+    }
+}
+
+function saveRejoinParticipantId(code, name, participantId) {
+    try {
+        if (!code || !name || !participantId) return;
+        localStorage.setItem(rejoinPointerKey(code, name), String(participantId));
+    } catch {
+        // ignore
+    }
+}
+
+function getRandomRoleDifferentFrom(roles, disallowId) {
+    const list = Array.isArray(roles) ? roles.filter(Boolean) : [];
+    if (!list.length) return null;
+    if (!disallowId) return list[Math.floor(Math.random() * list.length)];
+    const filtered = list.filter(r => String(r.id) !== String(disallowId));
+    if (filtered.length) return filtered[Math.floor(Math.random() * filtered.length)];
+    return list[Math.floor(Math.random() * list.length)];
+}
+
 function saveUserDraftToStorage() {
     try {
         if (state.user.isModerator || state.user.isDisplay) return;
@@ -2577,19 +2611,45 @@ async function completeJoinSession(code, name, realRole) {
         } catch (e) {
             console.warn('⚠️ Не удалось загрузить список участников перед входом, продолжаю подключение:', e);
         }
+    } else {
+        // Локальный режим: также подгружаем участников, чтобы работал re-join и равномерное распределение.
+        try {
+            const localSession = localReadSession(code);
+            if (localSession?.participants) {
+                state.participants = Object.values(localSession.participants).map(p => ensureParticipantMeta(p));
+            }
+        } catch (e) {
+            console.warn('⚠️ Не удалось загрузить локальных участников перед входом, продолжаю подключение:', e);
+        }
     }
 
-    // Если участник уже существует (тот же код + имя + реальная роль) — возвращаем на место (без дублей)
-    const existingMe = state.participants.find(p =>
-        !p.isBot &&
-        String(p.name || '').trim().toLowerCase() === String(name || '').trim().toLowerCase() &&
-        String(p.realRole || '') === String(realRole || '')
-    );
+    // Если участник уже существует (тот же код + имя) — возвращаем на место (без дублей).
+    // 1) Сначала пробуем точное восстановление по сохранённому participantId
+    // 2) Потом fallback по имени (если participantId не найден/не совпал)
+    const storedParticipantId = loadRejoinParticipantId(code, name);
+    const normalizedName = normalizePersonName(name);
+    const existingMe =
+        (storedParticipantId ? state.participants.find(p => !p.isBot && String(p.id) === String(storedParticipantId)) : null) ||
+        state.participants.find(p => !p.isBot && normalizePersonName(p.name) === normalizedName);
+
     if (existingMe) {
         state.user.id = existingMe.id;
         state.user.team = existingMe.team;
         state.user.gameRole = existingMe.gameRole;
+        // Реальная роль — метаданные. При ре-джойне сохраняем исходную реальную роль,
+        // чтобы не "перезаписывать" историю из-за выбора на экране входа.
+        state.user.realRole = existingMe.realRole || realRole;
         state.user.isCaptain = !!existingMe.isCaptain;
+
+        saveRejoinParticipantId(code, name, existingMe.id);
+
+        // Обновим отметку "жив" (без изменения команды/ролей)
+        try {
+            existingMe.lastSeenAtMs = Date.now();
+            saveParticipantToFirebase(existingMe);
+        } catch {
+            // ignore
+        }
 
         // Инициализируем параметры/черновик
         state.parameters = getAllParameters();
@@ -2611,9 +2671,8 @@ async function completeJoinSession(code, name, realRole) {
 }
 
 function completeJoinSessionStep2(code, name, realRole) {
-    // Назначаем игровую роль (ОТЛИЧНУЮ от реальной)
-    const availableGameRoles = CONFIG.gameRoles.filter(r => r.id !== realRole);
-    const assignedRole = availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)];
+    // Назначаем игровую роль: случайно и точно ОТЛИЧНУЮ от выбранной реальной роли
+    const assignedRole = getRandomRoleDifferentFrom(CONFIG.gameRoles, realRole) || (CONFIG.gameRoles && CONFIG.gameRoles[0]) || { id: 'unknown', name: 'Роль' };
     state.user.gameRole = assignedRole;
     
     // Назначаем команду равномерно (НЕ зависит от выбранной реальной роли),
@@ -2643,12 +2702,15 @@ function completeJoinSessionStep2(code, name, realRole) {
         gameRole: assignedRole,
         team: assignedTeam,
         isCaptain: false,
+        lastSeenAtMs: Date.now(),
         // Персональные подтверждения решений (по фазам)
         confirmed: false,
         confirmedPhase: null,
         confirmations: {}
     };
     state.participants.push(participant);
+
+    saveRejoinParticipantId(code, name, participant.id);
     
     // Назначаем капитана команды
     assignTeamCaptain(assignedTeam.id);
@@ -2667,7 +2729,8 @@ function completeJoinSessionStep2(code, name, realRole) {
     const captainMsg = state.user.isCaptain ? ' Вы — капитан команды!' : '';
     const phaseMsg = ` | Фаза: ${state.session.phase}`;
     showNotification(`Вы в ${assignedTeam.name}.${captainMsg}${phaseMsg}`, 'success');
-    addToLog('join', `${name} (${CONFIG.realRoles[realRole].name}) → ${assignedTeam.name}`);
+    const rrName = (CONFIG.realRoles && CONFIG.realRoles[realRole] && CONFIG.realRoles[realRole].name) ? CONFIG.realRoles[realRole].name : String(realRole || '-');
+    addToLog('join', `${name} (${rrName}) → ${assignedTeam.name}`);
     
     console.log('✅ Участник подключен, текущая фаза:', state.session.phase);
 }
