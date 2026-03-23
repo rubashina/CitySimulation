@@ -165,10 +165,13 @@ function ensureTimerTicking() {
         if (!state.ui.timerMilestonesNotified[key]) state.ui.timerMilestonesNotified[key] = {};
         const flags = state.ui.timerMilestonesNotified[key];
 
-        // Старт (10 минут) — показываем сразу, как только таймер появился/обновился
-        if (!flags.start && remaining <= CONFIG.decisionTimers.durationSec && remaining > CONFIG.decisionTimers.durationSec - 2) {
-            flags.start = true;
-            showNotification('⏳ Осталось 10 минут, чтобы принять решения', 'info');
+        // Старт (10 минут) — показываем один раз в начале таймера
+        if (!flags.start) {
+            const dur = Number(CONFIG.decisionTimers.durationSec);
+            if (Number.isFinite(dur) && remaining >= Math.max(0, dur - 2)) {
+                flags.start = true;
+                showNotification('⏳ Осталось 10 минут, чтобы принять решения', 'info');
+            }
         }
 
         // 3 минуты осталось
@@ -202,7 +205,7 @@ function updatePhaseTimerUI() {
         el.classList.remove('hidden');
         const remaining = getTimerRemainingSec(p);
         if (remaining === null) {
-            el.textContent = '⏳ 10:00';
+            el.textContent = '⏳ —';
             return;
         }
         el.textContent = `⏳ ${formatDuration(remaining)}`;
@@ -400,6 +403,64 @@ function initFirebase() {
 // FIREBASE СИНХРОНИЗАЦИЯ
 // =====================================================
 
+let FB_SUBSCRIBED_CODE = null;
+let FB_SESSION_REF = null;
+let FB_OFF = []; // [{ ref, eventType, cb }]
+let APPLIED_EVENT_KEYS = new Set(); // чтобы не применять одно и то же событие дважды
+
+function fbOn(ref, eventType, cb) {
+    try {
+        ref.on(eventType, cb);
+        FB_OFF.push({ ref, eventType, cb });
+    } catch (e) {
+        console.warn('⚠️ Firebase: не удалось подписаться:', e);
+    }
+}
+
+function unsubscribeFromSession() {
+    try {
+        FB_OFF.forEach(h => {
+            try { h.ref.off(h.eventType, h.cb); } catch (_) {}
+        });
+    } finally {
+        FB_OFF = [];
+        FB_SESSION_REF = null;
+        FB_SUBSCRIBED_CODE = null;
+        APPLIED_EVENT_KEYS = new Set();
+    }
+}
+
+async function getRejoinIdFromFirebase(code, name) {
+    if (!firebaseEnabled) return null;
+    if (!code || !name) return null;
+    try {
+        const key = normalizePersonName(name);
+        const ref = firebaseDB.ref(`sessions/${code}/rejoinIndex/${key}`);
+        const snap = await ref.once('value');
+        const id = snap.val();
+        return id ? String(id) : null;
+    } catch (e) {
+        console.warn('⚠️ Firebase: не удалось прочитать rejoinIndex:', e);
+        return null;
+    }
+}
+
+async function claimRejoinNameInFirebase(code, name, participantId) {
+    if (!firebaseEnabled) return true;
+    if (!code || !name || !participantId) return false;
+    try {
+        const key = normalizePersonName(name);
+        const ref = firebaseDB.ref(`sessions/${code}/rejoinIndex/${key}`);
+        const res = await ref.transaction((current) => current ? current : participantId);
+        // committed=true means our write (or existing same value) stuck; but we also need to ensure name isn't claimed by someone else
+        const finalVal = res?.snapshot?.val();
+        return String(finalVal) === String(participantId);
+    } catch (e) {
+        console.warn('⚠️ Firebase: не удалось закрепить имя для rejoin:', e);
+        return false;
+    }
+}
+
 // Подписка на изменения сессии
 function subscribeToSession(sessionCode) {
     // Fallback: локальная синхронизация между вкладками
@@ -413,11 +474,21 @@ function subscribeToSession(sessionCode) {
         return;
     }
     
+    if (FB_SUBSCRIBED_CODE === sessionCode && FB_SESSION_REF) {
+        console.log(`📡 Firebase: уже подписаны на сессию ${sessionCode}`);
+        return;
+    }
+    if (FB_SESSION_REF && FB_SUBSCRIBED_CODE && FB_SUBSCRIBED_CODE !== sessionCode) {
+        unsubscribeFromSession();
+    }
+
     const sessionRef = firebaseDB.ref(`sessions/${sessionCode}`);
+    FB_SESSION_REF = sessionRef;
+    FB_SUBSCRIBED_CODE = sessionCode;
     
     // Слушаем изменения метаданных сессии (БЕЗ фазы!)
     // Фаза — единственный источник правды: sessions/{code}/phase
-    sessionRef.child('session').on('value', (snapshot) => {
+    fbOn(sessionRef.child('session'), 'value', (snapshot) => {
         const sessionData = snapshot.val();
         if (sessionData) {
             syncSessionDataFromFirebase(sessionData);
@@ -460,7 +531,7 @@ function subscribeToSession(sessionCode) {
     }
     
     // Слушаем добавление новых участников
-    sessionRef.child('participants').on('child_added', (snapshot) => {
+    fbOn(sessionRef.child('participants'), 'child_added', (snapshot) => {
         const participant = ensureParticipantMeta(snapshot.val());
         console.log('🔔 child_added сработал! Участник:', participant?.name, 'Модератор?', state.user.isModerator);
         
@@ -489,7 +560,7 @@ function subscribeToSession(sessionCode) {
     });
 
     // Слушаем изменения участников (подтверждения, смена роли и т.п.)
-    sessionRef.child('participants').on('child_changed', (snapshot) => {
+    fbOn(sessionRef.child('participants'), 'child_changed', (snapshot) => {
         const participant = ensureParticipantMeta(snapshot.val());
         if (!participant) return;
         const idx = state.participants.findIndex(p => p.id === participant.id);
@@ -508,7 +579,7 @@ function subscribeToSession(sessionCode) {
     });
     
     // Слушаем изменения команд
-    sessionRef.child('teams').on('value', (snapshot) => {
+    fbOn(sessionRef.child('teams'), 'value', (snapshot) => {
         const teamsData = snapshot.val();
         if (teamsData) {
             console.log('📦 Firebase: получены данные команд:', Object.keys(teamsData));
@@ -546,7 +617,7 @@ function subscribeToSession(sessionCode) {
     });
     
     // Слушаем изменения фазы
-    sessionRef.child('phase').on('value', (snapshot) => {
+    fbOn(sessionRef.child('phase'), 'value', (snapshot) => {
         const raw = snapshot.val();
         const phase = raw === null ? null : Number(raw);
         console.log('📍 Firebase: получена фаза', phase, 'текущая:', state.session.phase);
@@ -572,7 +643,7 @@ function subscribeToSession(sessionCode) {
     });
 
     // Таймеры фаз
-    sessionRef.child('timers').on('value', (snapshot) => {
+    fbOn(sessionRef.child('timers'), 'value', (snapshot) => {
         const timers = snapshot.val() || {};
         state.session.timers = timers;
         updatePhaseTimerUI();
@@ -580,7 +651,7 @@ function subscribeToSession(sessionCode) {
     });
 
     // Сообщения модератора
-    sessionRef.child('broadcasts').limitToLast(20).on('child_added', (snapshot) => {
+    fbOn(sessionRef.child('broadcasts').limitToLast(20), 'child_added', (snapshot) => {
         const payload = snapshot.val();
         if (!payload?.message) return;
         // Не показываем самому себе, если это модератор в той же вкладке
@@ -589,9 +660,33 @@ function subscribeToSession(sessionCode) {
     });
 
     // События модератора (интермиссия и т.п.)
-    sessionRef.child('events').limitToLast(20).on('child_added', (snapshot) => {
+    // События: перед подпиской проигрываем последние события, чтобы поздние участники
+    // применили блокировки/ограничения и не получили "другую игру".
+    try {
+        sessionRef.child('events').limitToLast(50).once('value', (snap) => {
+            if (state.user.isModerator) return;
+            snap.forEach(child => {
+                const key = child.key;
+                const event = child.val();
+                if (!key || APPLIED_EVENT_KEYS.has(key)) return;
+                if (!event?.effect) return;
+                APPLIED_EVENT_KEYS.add(key);
+                applyEventEffect(event);
+            });
+            renderParameters();
+            updateConfirmButton();
+            renderParticipantInsights();
+        });
+    } catch (e) {
+        console.warn('⚠️ Firebase: не удалось проиграть события:', e);
+    }
+
+    fbOn(sessionRef.child('events').limitToLast(20), 'child_added', (snapshot) => {
+        const key = snapshot.key;
         const event = snapshot.val();
         if (!event?.effect) return;
+        if (key && APPLIED_EVENT_KEYS.has(key)) return;
+        if (key) APPLIED_EVENT_KEYS.add(key);
         
         // Участники применяют эффекты
         if (!state.user.isModerator) {
@@ -2739,14 +2834,20 @@ async function completeJoinSession(code, name, realRole) {
         }
     }
 
-    // Если участник уже существует (тот же код + имя) — возвращаем на место (без дублей).
-    // 1) Сначала пробуем точное восстановление по сохранённому participantId
-    // 2) Потом fallback по имени (если participantId не найден/не совпал)
-    const storedParticipantId = loadRejoinParticipantId(code, name);
+    // Re-join: возвращаем на место только по закреплённому participantId (без склейки по имени).
+    // Источники:
+    // - localStorage (быстро на том же устройстве)
+    // - Firebase rejoinIndex (работает и с другого устройства)
+    let storedParticipantId = loadRejoinParticipantId(code, name);
+    if (!storedParticipantId && firebaseEnabled) {
+        storedParticipantId = await getRejoinIdFromFirebase(code, name);
+        if (storedParticipantId) saveRejoinParticipantId(code, name, storedParticipantId);
+    }
+
     const normalizedName = normalizePersonName(name);
-    const existingMe =
-        (storedParticipantId ? state.participants.find(p => !p.isBot && String(p.id) === String(storedParticipantId)) : null) ||
-        state.participants.find(p => !p.isBot && normalizePersonName(p.name) === normalizedName);
+    const existingMe = storedParticipantId
+        ? state.participants.find(p => !p.isBot && String(p.id) === String(storedParticipantId))
+        : null;
 
     if (existingMe) {
         state.user.id = existingMe.id;
@@ -2778,6 +2879,13 @@ async function completeJoinSession(code, name, realRole) {
         addToLog('join', `${name} вернулся(ась) в сессию → ${existingMe.team?.name || '-'}`);
         console.log('✅ Re-join: участник восстановлен:', existingMe.id);
         return;
+    }
+
+    // Защита от коллизий имён: если имя уже занято в этой сессии — просим выбрать уникальное
+    const nameTaken = state.participants.some(p => !p.isBot && normalizePersonName(p.name) === normalizedName);
+    if (nameTaken) {
+        showNotification('Это имя уже занято в сессии. Добавьте отличительный символ (например, "Анна 2").', 'error');
+        throw new Error('Name already taken');
     }
 
     // Новый участник
@@ -2827,6 +2935,10 @@ function completeJoinSessionStep2(code, name, realRole) {
     state.participants.push(participant);
 
     saveRejoinParticipantId(code, name, participant.id);
+    // Закрепляем имя для re-join и с другого устройства (без перезаписи чужих)
+    claimRejoinNameInFirebase(code, name, participant.id).then(ok => {
+        if (!ok) console.warn('⚠️ rejoinIndex: имя не удалось закрепить (возможно занято другим участником)');
+    });
     
     // Назначаем капитана команды
     assignTeamCaptain(assignedTeam.id);
@@ -2923,8 +3035,21 @@ function initParticipantScreen() {
     renderParameters();
     renderCaptainMatrix();
     renderParticipantInsights();
-    initHistoryPanel();
-    initTerritoryMapControls();
+    // Инициализация обработчиков должна быть идемпотентной (re-join не должен удваивать клики)
+    if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+    if (!state.ui.participantHandlersBound) {
+        state.ui.participantHandlersBound = true;
+        initHistoryPanel();
+        initTerritoryMapControls();
+        
+        // Кнопка подтверждения
+        const confirmBtn = $('#confirm-btn');
+        if (confirmBtn) {
+            if (confirmBtn._csim_onConfirm) confirmBtn.removeEventListener('click', confirmBtn._csim_onConfirm);
+            confirmBtn._csim_onConfirm = confirmDecision;
+            confirmBtn.addEventListener('click', confirmBtn._csim_onConfirm);
+        }
+    }
     
     // Инициализируем ИГС Hero
     updateIGSHero();
@@ -2946,8 +3071,7 @@ function initParticipantScreen() {
         }
     }, 250);
     
-    // Кнопка подтверждения
-    $('#confirm-btn').addEventListener('click', confirmDecision);
+    // (обработчик confirm-btn биндится идемпотентно выше)
 }
 
 function renderParticipantInsights() {
@@ -3312,8 +3436,8 @@ function getIGSClass(value) {
 }
 
 function normalizeIGSPercent(igsValue) {
-    // В текущей модели практический максимум ≈ 80 (0.20+0.15+0.15+0.15+0.15 = 0.80)
-    const pct = (Number(igsValue) / 80) * 100;
+    // Единая шкала игры: ИГС уже нормирован в диапазон 0..100
+    const pct = Number(igsValue);
     return Math.max(0, Math.min(100, pct));
 }
 
