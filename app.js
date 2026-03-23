@@ -1104,11 +1104,11 @@ const CONFIG = {
     
     // Игровые роли (назначаются случайно, отличаются от реальной)
     gameRoles: [
-        { id: 'architect', name: 'Архитектор', desc: 'Вы отстаиваете интересы архитектурного сообщества', icon: '🏛️' },
-        { id: 'activist', name: 'Активист', desc: 'Вы защищаете права и интересы граждан', icon: '📢' },
-        { id: 'resident', name: 'Местный житель', desc: 'Вы представляете интересы жителей района', icon: '🏠' },
-        { id: 'admin', name: 'Чиновник', desc: 'Вы представляете интересы городской администрации', icon: '🏢' },
-        { id: 'business', name: 'Предприниматель', desc: 'Вы представляете интересы бизнес-сообщества', icon: '💼' }
+        { id: 'architect', name: 'Архитектор', desc: 'Вы отстаиваете интересы архитектурного сообщества', icon: '🏛️', intro: '', instructions: [] },
+        { id: 'activist', name: 'Активист', desc: 'Вы защищаете права и интересы граждан', icon: '📢', intro: '', instructions: [] },
+        { id: 'resident', name: 'Местный житель', desc: 'Вы представляете интересы жителей района', icon: '🏠', intro: '', instructions: [] },
+        { id: 'admin', name: 'Чиновник', desc: 'Вы представляете интересы городской администрации', icon: '🏢', intro: '', instructions: [] },
+        { id: 'business', name: 'Предприниматель', desc: 'Вы представляете интересы бизнес-сообщества', icon: '💼', intro: '', instructions: [] }
     ],
     
     // Команды
@@ -2853,6 +2853,24 @@ function renderRoleCard() {
         $('#role-desc').textContent = `${gameRole.desc}. Вносите личные изменения и подтверждайте своё решение.`;
         $('#role-team').textContent = team.name + (userIsCaptain ? ' (капитан)' : '');
         $('#role-team').className = `role-team team-${team.id}`;
+
+        const guidanceWrap = $('#role-guidance');
+        const introEl = $('#role-intro');
+        const listEl = $('#role-instructions');
+        const introText = String(gameRole.intro || '').trim();
+        const steps = Array.isArray(gameRole.instructions) ? gameRole.instructions.map(s => String(s || '').trim()).filter(Boolean) : [];
+
+        if (guidanceWrap && introEl && listEl) {
+            introEl.textContent = introText;
+            listEl.innerHTML = '';
+            steps.forEach(text => {
+                const li = document.createElement('li');
+                li.textContent = text;
+                listEl.appendChild(li);
+            });
+            guidanceWrap.classList.toggle('hidden', !introText && steps.length === 0);
+        }
+
         roleCard.classList.remove('hidden');
     } else {
         roleCard.classList.add('hidden');
