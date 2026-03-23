@@ -4054,7 +4054,16 @@ function initModeratorTabs() {
 // Управление фазами (только вперёд!)
 function initPhaseControls() {
     if (state.user.isDisplay) return;
-    $('#next-phase').addEventListener('click', () => {
+    const nextBtn = $('#next-phase');
+    const pauseBtn = $('#pause-btn');
+    if (!nextBtn || !pauseBtn) return;
+
+    // Идемпотентность: при повторной инициализации не навешиваем обработчики повторно,
+    // иначе один клик может сдвигать фазу на +2 и "пропускать" раунд.
+    if (nextBtn._csim_onNextPhase) nextBtn.removeEventListener('click', nextBtn._csim_onNextPhase);
+    if (pauseBtn._csim_onPause) pauseBtn.removeEventListener('click', pauseBtn._csim_onPause);
+
+    nextBtn._csim_onNextPhase = () => {
         if (state.session.phase < CONFIG.phases.length - 1) {
             const oldPhase = state.session.phase;
             state.session.phase++;
@@ -4088,11 +4097,12 @@ function initPhaseControls() {
                 $('#next-phase').textContent = '🏁 Игра завершена';
             }
         }
-    });
+    };
+    nextBtn.addEventListener('click', nextBtn._csim_onNextPhase);
     
-    $('#pause-btn').addEventListener('click', () => {
+    pauseBtn._csim_onPause = () => {
         state.session.isPaused = !state.session.isPaused;
-        const btn = $('#pause-btn');
+        const btn = pauseBtn;
         
         if (state.session.isPaused) {
             btn.innerHTML = `
@@ -4116,7 +4126,8 @@ function initPhaseControls() {
             btn.classList.remove('btn-primary');
             addToLog('system', 'Симуляция возобновлена');
         }
-    });
+    };
+    pauseBtn.addEventListener('click', pauseBtn._csim_onPause);
 }
 
 function updatePhaseUI() {
