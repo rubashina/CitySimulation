@@ -2120,16 +2120,12 @@ function ensureUserDraftInitialized() {
         const me = getParticipantById(state.user.id);
         const rec = me ? getParticipantConfirmation(me, decisionPhase) : null;
         let base = null;
-        // Для 2-го раунда (decisionPhase=4) логично начинать с итогов раунда 1, если раунд 2 ещё не подтверждён.
+        // Для 2-го раунда (decisionPhase=4) участники принимают решения заново.
+        // Поэтому, если раунд 2 ещё не подтверждён, начинаем с дефолтного вектора (а не с итогов раунда 1).
         if (decisionPhase === 4) {
             const rec4 = rec;
             if (rec4?.confirmed && Array.isArray(rec4.parameters) && rec4.parameters.length > 0) {
                 base = rec4.parameters;
-            } else {
-                const rec1 = me ? getParticipantConfirmation(me, 1) : null;
-                if (rec1?.confirmed && Array.isArray(rec1.parameters) && rec1.parameters.length > 0) {
-                    base = rec1.parameters;
-                }
             }
         } else {
             if (rec?.confirmed && Array.isArray(rec.parameters) && rec.parameters.length > 0) {
