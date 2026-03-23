@@ -830,21 +830,21 @@ const CONFIG = {
             multiplier: 0.6, 
             desc: 'Минимальное финансирование',
             icon: '💰',
-            totalPoints: 800
+            totalPoints: 80
         },
         medium: { 
             name: 'Стандартный', 
             multiplier: 1.0, 
             desc: 'Типичный бюджет благоустройства',
             icon: '💰💰',
-            totalPoints: 1200
+            totalPoints: 120
         },
         high: { 
             name: 'Расширенный', 
             multiplier: 1.5, 
             desc: 'Приоритетный проект',
             icon: '💰💰💰',
-            totalPoints: 1800
+            totalPoints: 180
         }
     },
 
@@ -877,12 +877,14 @@ const CONFIG = {
         B: 12,
         I: 15,   // Инклюзивность дорого
         U: 10,
-        As: 5,   // Участие дёшево
+        As: 8,
         O: 8,
         V: 6,
         L: 12,   // Шумоизоляция дорого
-        Ca: -5,  // Твёрдое покрытие даёт экономию
-        Tp: -3   // Трафик тоже экономия
+        // Важно: "фишки влияния" — это усилие/политический капитал, поэтому даже "снижение" чего-то
+        // не должно давать отрицательный расход. Значения ниже — стоимость за +10 единиц отклонения от дефолта.
+        Ca: 12,
+        Tp: 12
     },
     
     // Веса компонентов ИГС
@@ -1208,7 +1210,7 @@ const state = {
         projectScale: 'medium',
         budgetLevel: 'medium',
         budgetUsed: 0,
-        budgetTotal: 1200,
+        budgetTotal: 120,
         // Снимки состояния для сравнения
         round1Snapshot: null,
         initialSnapshot: null
