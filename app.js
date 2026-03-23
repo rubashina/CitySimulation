@@ -2616,8 +2616,9 @@ function completeJoinSessionStep2(code, name, realRole) {
     const assignedRole = availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)];
     state.user.gameRole = assignedRole;
     
-    // Назначаем команду по реальной роли (Архитекторы/Активисты/Жители/Администрация/Бизнес)
-    const assignedTeam = getTeamForRealRole(realRole) || getLeastFilledTeam();
+    // Назначаем команду равномерно (НЕ зависит от выбранной реальной роли),
+    // чтобы при любых вводных данные распределялись по командам.
+    const assignedTeam = getLeastFilledTeam();
     state.user.team = assignedTeam;
     
     // Инициализируем параметры из новой структуры
@@ -4306,8 +4307,8 @@ function addParticipant(name, isBot = false, values = null, realRole = null) {
     const availableGameRoles = CONFIG.gameRoles.filter(r => r.id !== assignedRealRole);
     const assignedGameRole = availableGameRoles[Math.floor(Math.random() * availableGameRoles.length)];
     
-    // Назначаем команду по реальной роли (если есть), иначе — наименее заполненную
-    const assignedTeam = getTeamForRealRole(assignedRealRole) || getLeastFilledTeam();
+    // Назначаем команду равномерно (НЕ зависит от реальной роли)
+    const assignedTeam = getLeastFilledTeam();
     
     // Инициализируем данные команды, если нужно
     initTeamData(assignedTeam.id);
