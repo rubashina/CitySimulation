@@ -2770,6 +2770,26 @@ body.display-mode #add-bot-btn {
     margin-top: -0.25rem;
 }
 
+.igs-hero-status {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.igs-hero-status .ok {
+    color: var(--success);
+    font-weight: 700;
+}
+
+.igs-hero-status .warn {
+    color: var(--warning);
+    font-weight: 700;
+}
+
+.igs-hero-status .muted {
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
 .igs-hero-grade {
     font-size: 0.8125rem;
     color: var(--text-secondary);

@@ -3340,14 +3340,24 @@ function renderIGSPanel() {
         }
     }
     
-    const params = getUserDraftParameters();
+    const currentPhase = Number(state.session.phase);
+    const decisionPhase = getDecisionPhaseForUI(currentPhase);
+    const me = getParticipantById(state.user.id);
+    const rec = me ? getParticipantConfirmation(me, decisionPhase) : null;
+    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
+
+    // В фазах ввода показываем черновик (чтобы видеть эффект от слайдеров),
+    // в фазах анализа — подтверждённое (чтобы не путать "неподтверждённые" правки).
+    const draft = getUserDraftParameters();
+    const confirmedParams = (rec?.confirmed && Array.isArray(rec.parameters) && rec.parameters.length) ? rec.parameters : null;
+    const params = (!isInputPhase && confirmedParams) ? confirmedParams : draft;
     if (!params || !igsPanel) return;
-    
+
     const igs = calculateIGS(params);
     
     igsPanel.innerHTML = `
         <div class="igs-main">
-            <div class="igs-label">ИГС вашего решения</div>
+            <div class="igs-label">ИГС (${(!isInputPhase && confirmedParams) ? 'подтверждено' : 'черновик'})</div>
             <div class="igs-value ${getIGSClass(igs.total)}">${igs.total.toFixed(1)}</div>
             <div class="igs-bar">
                 <div class="igs-bar-fill" style="width: ${igs.total}%"></div>
@@ -3357,14 +3367,15 @@ function renderIGSPanel() {
             ${CONFIG.parameterCategories.map(cat => {
                 const val = igs.components[cat.id];
                 const contribution = cat.weight * val;
+                const sign = contribution >= 0 ? '+' : '−';
                 return `
-                    <div class="igs-component" data-tooltip="${cat.name}: ${val.toFixed(1)} × ${cat.weight} = ${contribution.toFixed(1)}">
+                    <div class="igs-component" data-tooltip="${cat.name}: ${val.toFixed(1)} × ${cat.weight} = ${sign}${Math.abs(contribution).toFixed(1)}${cat.isNegative ? ' (штраф)' : ''}">
                         <span class="comp-icon">${cat.icon}</span>
                         <span class="comp-value" style="color: ${cat.color}">${val.toFixed(0)}</span>
                     </div>
                 `;
             }).join('')}
-            <div class="igs-component conflict" data-tooltip="Конфликт интересов: ${igs.components.D.toFixed(1)}">
+            <div class="igs-component conflict" data-tooltip="Конфликт D (штраф): ${igs.components.D.toFixed(1)} • 0 = полное согласие, выше = сильнее расхождения">
                 <span class="comp-icon">⚡</span>
                 <span class="comp-value">${igs.components.D.toFixed(0)}</span>
             </div>
@@ -3498,9 +3509,17 @@ function updateIGSHero() {
     
     if (!heroValue) return;
     
-    const params = getUserDraftParameters();
+    const currentPhase = Number(state.session.phase);
+    const decisionPhase = getDecisionPhaseForUI(currentPhase);
+    const isInputPhase = (currentPhase === 1 || currentPhase === 4);
+    const me = getParticipantById(state.user.id);
+    const rec = me ? getParticipantConfirmation(me, decisionPhase) : null;
+
+    const draft = getUserDraftParameters();
+    const confirmedParams = (rec?.confirmed && Array.isArray(rec.parameters) && rec.parameters.length) ? rec.parameters : null;
+    const params = (!isInputPhase && confirmedParams) ? confirmedParams : draft;
     if (!params) return;
-    
+
     const igs = calculateIGS(params);
     const budgetUsed = calculateBudgetUsed(params);
     const budgetTotal = state.session.budgetTotal;
@@ -3513,13 +3532,27 @@ function updateIGSHero() {
 
     const gradeEl = $('#igs-hero-grade');
     if (gradeEl) {
-        const pct = normalizeIGSPercent(igs.total);
-        gradeEl.textContent = `${getIGSGradeText(igs.total)} • ${pct.toFixed(0)}% от максимума модели`;
+        gradeEl.textContent = `${getIGSGradeText(igs.total)} • ${igs.total.toFixed(0)} из 100`;
+    }
+
+    const statusEl = $('#igs-hero-status');
+    if (statusEl) {
+        const sameAsConfirmed = !!(isInputPhase && confirmedParams && areParamVectorsEqual(confirmedParams, draft));
+        if (!isInputPhase) {
+            statusEl.innerHTML = confirmedParams
+                ? `<span class="muted">Показано:</span> <span class="ok">подтверждённое</span> (раунд ${decisionPhase})`
+                : `<span class="muted">Показано:</span> <span class="warn">черновик</span> (нет подтверждения раунда ${decisionPhase})`;
+        } else {
+            statusEl.innerHTML = sameAsConfirmed
+                ? `<span class="muted">Статус:</span> <span class="ok">подтверждено ✓</span> (раунд ${decisionPhase})`
+                : `<span class="muted">Статус:</span> <span class="warn">черновик</span> (нажмите «Подтвердить решение»)`;
+        }
     }
     
     // Бюджет
     if (budgetDisplay) {
-        budgetDisplay.textContent = `${budgetUsed} / ${budgetTotal}`;
+        const remaining = Math.max(0, Math.round(Number(budgetTotal) - Number(budgetUsed)));
+        budgetDisplay.textContent = `${budgetUsed} / ${budgetTotal} (осталось ${remaining})`;
         if (budgetUsed > budgetTotal) {
             budgetDisplay.classList.add('over');
         } else {
@@ -3858,9 +3891,9 @@ function renderParticipantTeamsRadar() {
     }
 
     if (far?.team) {
-        hint.innerHTML = `Самый сильный конфликт: <b>${far.team.name}</b> • максимальный разрыв в категории <b>${far.maxCat?.name || '—'}</b>`;
+        hint.innerHTML = `Раунд ${phase}: самый сильный конфликт — <b>${far.team.name}</b> • максимальный разрыв в категории <b>${far.maxCat?.name || '—'}</b>`;
     } else {
-        hint.textContent = '—';
+        hint.textContent = `Раунд ${phase}: —`;
     }
 }
 
@@ -3911,7 +3944,7 @@ function renderParticipantConflictBreakdown() {
 
     summary.innerHTML = `
         <div class="conflict-d">
-            <div>Конфликт D</div>
+            <div data-tooltip="Раунд ${phase}. D — расхождение между командами: 0 = полное согласие, выше = сильнее конфликт">Конфликт D (раунд ${phase})</div>
             <div class="num">${D.toFixed(1)}</div>
         </div>
         <span class="badge ${badgeCls}">${grade}</span>
