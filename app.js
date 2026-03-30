@@ -2237,35 +2237,31 @@ function getTeamForGameRole(gameRoleId) {
     return getTeamForRealRole(gameRoleId);
 }
 
-function pickBalancedGameRole(excludeRoleId) {
-    const excluded = String(excludeRoleId || '').trim();
-    const candidates = (CONFIG.gameRoles || []).filter(r => r && String(r.id) !== excluded);
-    if (!candidates.length) return (CONFIG.gameRoles && CONFIG.gameRoles[0]) || null;
+function pickBalancedGameRolePreferDifferent(realRoleId) {
+    const all = (CONFIG.gameRoles || []).filter(Boolean);
+    if (!all.length) return null;
+
+    const exclude = String(realRoleId || '').trim();
 
     // Считаем, сколько участников уже в каждой "ролевой" команде.
-    // Источник: team.roleId (после фикса он всегда совпадает с gameRole.id),
-    // fallback: gameRole.id (на случай старых данных).
+    // Считаем ВСЕХ (включая ботов), чтобы команды оставались равными при автодобавлении.
     const countsByRoleId = new Map();
-    candidates.forEach(r => countsByRoleId.set(String(r.id), 0));
+    all.forEach(r => countsByRoleId.set(String(r.id), 0));
     (state.participants || []).forEach(p => {
-        if (!p || p.isBot) return;
+        if (!p) return;
         const rid = String(p.team?.roleId || p.gameRole?.id || '').trim();
         if (!rid) return;
         if (countsByRoleId.has(rid)) countsByRoleId.set(rid, (countsByRoleId.get(rid) || 0) + 1);
     });
 
-    let best = [];
-    let bestCount = Infinity;
-    candidates.forEach(r => {
-        const c = countsByRoleId.get(String(r.id)) ?? 0;
-        if (c < bestCount) {
-            bestCount = c;
-            best = [r];
-        } else if (c === bestCount) {
-            best.push(r);
-        }
-    });
-    return best[Math.floor(Math.random() * best.length)];
+    // Берём самые "незаполненные" команды
+    const minCount = Math.min(...Array.from(countsByRoleId.values()));
+    const leastFilled = all.filter(r => (countsByRoleId.get(String(r.id)) ?? 0) === minCount);
+
+    // Пытаемся сохранить правило "игровая роль ≠ выбранной", но не ценой перекоса команд.
+    const preferred = leastFilled.filter(r => String(r.id) !== exclude);
+    const pool = preferred.length ? preferred : leastFilled;
+    return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function getLeastFilledTeam() {
@@ -2931,7 +2927,11 @@ async function completeJoinSession(code, name, realRole) {
 
 function completeJoinSessionStep2(code, name, realRole) {
     // Назначаем игровую роль: отличается от реальной + стараемся балансировать команды
-    const assignedRole = pickBalancedGameRole(realRole) || getRandomRoleDifferentFrom(CONFIG.gameRoles, realRole) || (CONFIG.gameRoles && CONFIG.gameRoles[0]) || { id: 'unknown', name: 'Роль' };
+    const assignedRole =
+        pickBalancedGameRolePreferDifferent(realRole) ||
+        getRandomRoleDifferentFrom(CONFIG.gameRoles, realRole) ||
+        (CONFIG.gameRoles && CONFIG.gameRoles[0]) ||
+        { id: 'unknown', name: 'Роль' };
     state.user.gameRole = assignedRole;
     
     // Команда = игровая роль. Люди с одинаковой игровой ролью попадают в одну команду.
@@ -4703,7 +4703,9 @@ function addParticipant(name, isBot = false, values = null, realRole = null) {
     const assignedRealRole = realRole || roleKeys[Math.floor(Math.random() * roleKeys.length)];
     
     // Игровая роль отличается от реальной + балансировка
-    const assignedGameRole = pickBalancedGameRole(assignedRealRole) || getRandomRoleDifferentFrom(CONFIG.gameRoles, assignedRealRole);
+    const assignedGameRole =
+        pickBalancedGameRolePreferDifferent(assignedRealRole) ||
+        getRandomRoleDifferentFrom(CONFIG.gameRoles, assignedRealRole);
 
     // Команда = игровая роль
     const assignedTeam = getTeamForGameRole(assignedGameRole?.id) || getLeastFilledTeam();
