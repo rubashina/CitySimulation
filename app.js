@@ -1454,15 +1454,26 @@ function buildProtocolReport() {
         const members = getTeamMembers(t.id).filter(p => !p.isBot);
         const stats = getTeamConfirmationStats(t.id, decisionPhase);
         const igs = calculateTeamIGS(t.id, decisionPhase);
+        const teamRoleId = String(t.roleId || '').trim();
+        const teamRole = CONFIG.gameRoles?.find(r => String(r.id) === teamRoleId) || null;
         return {
             id: t.id,
+            roleId: teamRoleId || null,
+            roleName: teamRole?.name || null,
+            roleIcon: teamRole?.icon || null,
             name: t.name,
             color: t.color,
             members: members.map(m => ({
                 id: m.id,
                 name: m.name,
+                // Реальная роль — выбрана на входе (метаданные)
+                realRoleId: m.realRole || null,
                 realRole: CONFIG.realRoles[m.realRole]?.name || m.realRole || '-',
+                realRoleIcon: CONFIG.realRoles[m.realRole]?.icon || null,
+                // Игровая роль — назначена (и соответствует команде)
+                gameRoleId: m.gameRole?.id || null,
                 gameRole: m.gameRole?.name || '-',
+                gameRoleIcon: m.gameRole?.icon || null,
                 isCaptain: !!m.isCaptain,
                 confirmed: isParticipantConfirmedForCurrentDecision(m, t.id, decisionPhase),
                 confirmationAt: getParticipantConfirmation(m, decisionPhase)?.at || null
@@ -1502,8 +1513,14 @@ function buildProtocolReport() {
             name: p.name,
             team: p.team?.name || null,
             teamId: p.team?.id || null,
+            // Реальная роль — выбрана на входе
+            realRoleId: p.realRole || null,
             realRole: CONFIG.realRoles[p.realRole]?.name || p.realRole || '-',
+            realRoleIcon: CONFIG.realRoles[p.realRole]?.icon || null,
+            // Игровая роль — назначена (и соответствует команде)
+            gameRoleId: p.gameRole?.id || null,
             gameRole: p.gameRole?.name || '-',
+            gameRoleIcon: p.gameRole?.icon || null,
             isCaptain: !!p.isCaptain,
             decisions: byPhase
         };
@@ -1558,11 +1575,14 @@ function buildProtocolText(report) {
     lines.push(`Итоги: консенсус ИГС=${r.summary.consensusIGS ?? '—'} | конфликт D=${r.summary.conflictD} | синхронизация=${r.summary.syncS}%`);
     lines.push('');
     r.teams.forEach(t => {
-        lines.push(`${t.name}: ИГС=${t.igs.total.toFixed(1)} | подтверждено ${t.confirmed.confirmed}/${t.confirmed.total}`);
+        const head = t.roleIcon ? `${t.roleIcon} ${t.name}` : t.name;
+        lines.push(`${head}: ИГС=${t.igs.total.toFixed(1)} | подтверждено ${t.confirmed.confirmed}/${t.confirmed.total}`);
         t.members.forEach(m => {
             const mark = m.confirmed ? '✓' : '○';
             const cap = m.isCaptain ? '👑 ' : '';
-            lines.push(`  - ${mark} ${cap}${m.name} (${m.realRole} / ${m.gameRole})`);
+            const real = `${m.realRoleIcon ? m.realRoleIcon + ' ' : ''}${m.realRole}`;
+            const game = `${m.gameRoleIcon ? m.gameRoleIcon + ' ' : ''}${m.gameRole}`;
+            lines.push(`  - ${mark} ${cap}${m.name} (вход: ${real} | игра: ${game})`);
         });
         lines.push('');
     });
@@ -1576,7 +1596,9 @@ function buildProtocolText(report) {
     lines.push('Решения участников (таблица: параметр / default / фаза1 / фаза4):');
     (r.decisionsByParticipant || []).forEach(p => {
         lines.push('');
-        lines.push(`${p.name} — ${p.team || '-'} (${p.realRole} / ${p.gameRole})`);
+        const real = `${p.realRoleIcon ? p.realRoleIcon + ' ' : ''}${p.realRole}`;
+        const game = `${p.gameRoleIcon ? p.gameRoleIcon + ' ' : ''}${p.gameRole}`;
+        lines.push(`${p.name} — ${p.team || '-'} (вход: ${real} | игра: ${game})`);
         const d1 = p.decisions?.['1'];
         const d4 = p.decisions?.['4'];
         lines.push(`  ИГС ф1: ${d1?.igs ?? '—'} | ИГС ф4: ${d4?.igs ?? '—'}`);
@@ -1630,14 +1652,15 @@ function buildProtocolHtml(report) {
     <div><b>Синхронизация:</b> ${esc(r.summary.syncS)}%</div>
   </div>
   ${r.teams.map(t => `
-    <div class="team">${esc(t.name)} — ИГС ${esc(t.igs.total.toFixed(1))} • подтверждено ${esc(t.confirmed.confirmed)}/${esc(t.confirmed.total)}</div>
+    <div class="team">${esc(`${t.roleIcon ? t.roleIcon + ' ' : ''}${t.name}`)} — ИГС ${esc(t.igs.total.toFixed(1))} • подтверждено ${esc(t.confirmed.confirmed)}/${esc(t.confirmed.total)}</div>
     <table>
-      <thead><tr><th>Участник</th><th>Роли</th><th>Статус</th></tr></thead>
+      <thead><tr><th>Участник</th><th>Роль на входе</th><th>Игровая роль (команда)</th><th>Статус</th></tr></thead>
       <tbody>
         ${t.members.map(m => `
           <tr>
             <td>${esc(m.name)}${m.isCaptain ? ' 👑' : ''}</td>
-            <td>${esc(m.realRole)} / ${esc(m.gameRole)}</td>
+            <td>${esc(`${m.realRoleIcon ? m.realRoleIcon + ' ' : ''}${m.realRole}`)}</td>
+            <td>${esc(`${m.gameRoleIcon ? m.gameRoleIcon + ' ' : ''}${m.gameRole}`)}</td>
             <td>${m.confirmed ? '✓ подтвердил' : '○ не подтвердил'}</td>
           </tr>
         `).join('')}
@@ -1652,7 +1675,7 @@ function buildProtocolHtml(report) {
       const base = d1?.parameters || d4?.parameters || [];
       return `
         <div class="team">${esc(p.name)} — ${esc(p.team || '-')} ${p.isCaptain ? '👑' : ''}</div>
-        <div class="small">Роли: ${esc(p.realRole)} / ${esc(p.gameRole)} • ИГС ф1: ${esc(d1?.igs ?? '—')} • ИГС ф4: ${esc(d4?.igs ?? '—')}</div>
+        <div class="small">Роль на входе: ${esc(`${p.realRoleIcon ? p.realRoleIcon + ' ' : ''}${p.realRole}`)} • Игровая роль: ${esc(`${p.gameRoleIcon ? p.gameRoleIcon + ' ' : ''}${p.gameRole}`)} • ИГС ф1: ${esc(d1?.igs ?? '—')} • ИГС ф4: ${esc(d4?.igs ?? '—')}</div>
         <table>
           <thead><tr><th>Параметр</th><th>Default</th><th>Фаза 1</th><th>Фаза 4</th></tr></thead>
           <tbody>
@@ -1878,6 +1901,23 @@ function getMovedParamIds(parameters) {
 
 function getMovedCount(parameters) {
     return getMovedParamIds(parameters).size;
+}
+
+function clamp(n, min, max) {
+    const x = Number(n);
+    const a = Number(min);
+    const b = Number(max);
+    if (!Number.isFinite(x)) return x;
+    if (Number.isFinite(a) && x < a) return a;
+    if (Number.isFinite(b) && x > b) return b;
+    return x;
+}
+
+function getEffectiveDefaultForParam(paramDef) {
+    const c = state.constraints?.[paramDef.id] || {};
+    const min = c.min ?? paramDef.min;
+    const max = c.max ?? paramDef.max;
+    return clamp(paramDef.default, min, max);
 }
 
 function getInitials(name) {
@@ -3182,9 +3222,15 @@ function renderParameters() {
     const currentPhase = Number(state.session.phase);
     const isInputPhase = (currentPhase === 1 || currentPhase === 4);
     const moveLimit = getMoveLimit();
-    // Счётчик изменений = сколько параметров сейчас НЕ на дефолте (а не "сколько трогали")
-    const defById = getDefaultValuesById();
-    const movedIds = getMovedParamIds(draftParams);
+    // Счётчик изменений = сколько параметров сейчас НЕ на (эффективном) дефолте с учётом ограничений
+    const defs = getAllParameters();
+    const defById = new Map(defs.map(p => [p.id, getEffectiveDefaultForParam(p)]));
+    const movedIds = new Set();
+    (draftParams || []).forEach(p => {
+        const def = defById.get(p.id);
+        if (typeof def !== 'number') return;
+        if (Number(p.value) !== Number(def)) movedIds.add(p.id);
+    });
     const movedCount = movedIds.size;
     const movesRemaining = Math.max(0, moveLimit - movedCount);
     
@@ -3253,7 +3299,7 @@ function renderParameters() {
                         <button type="button"
                                 class="param-reset-btn"
                                 data-param="${param.id}"
-                                data-tooltip="Сбросить к дефолту (${def}${param.unit})"
+                                data-tooltip="Сбросить к базовому значению (${def}${param.unit})"
                                 ${(!isInputPhase || isLocked || !isMoved) ? 'disabled' : ''}>
                             ↺
                         </button>
@@ -3286,12 +3332,13 @@ function renderParameters() {
                     const vec = getUserDraftParameters();
                     const entry = vec.find(p => p.id === param.id);
                     if (!entry) return;
-                    entry.value = def;
+                    // Возвращаем к "базе" с учётом текущих ограничений, чтобы бюджет реально возвращался
+                    entry.value = clamp(def, min, max);
 
                     const slider = card.querySelector(`#slider-${param.id}`);
-                    if (slider) slider.value = String(def);
+                    if (slider) slider.value = String(entry.value);
                     const valEl = card.querySelector(`#value-${param.id}`);
-                    if (valEl) valEl.textContent = def + param.unit;
+                    if (valEl) valEl.textContent = entry.value + param.unit;
 
                     updateIGSDisplay();
                     updateConfirmButton();
@@ -3518,7 +3565,8 @@ function calculateBudgetUsed(parameters) {
     parameters.forEach(p => {
         const paramDef = allParams.find(def => def.id === p.id);
         if (paramDef) {
-            const delta = p.value - paramDef.default;
+            const base = getEffectiveDefaultForParam(paramDef);
+            const delta = Number(p.value) - Number(base);
             const paramCost = CONFIG.parameterCosts[p.id] || 10;
             cost += Math.abs(delta) * paramCost / 10;
         }
