@@ -182,20 +182,20 @@ body::after {
     position: absolute;
     left: 50%;
     top: 42%;
-    width: min(1360px, 135vw);
+    width: min(1400px, 140vw);
     height: auto;
-    min-height: 105vmin;
-    transform: translate(-50%, -50%) rotate(-1deg);
-    opacity: 0.58;
+    min-height: 108vmin;
+    transform: translate(-50%, -50%) rotate(-2.5deg);
+    opacity: 0.72;
     mix-blend-mode: multiply;
-    filter: saturate(1.25) contrast(1.08);
+    filter: contrast(1.08) saturate(1.12);
 }
 
 @media (max-width: 640px) {
     .bg-city-map svg {
-        width: min(980px, 200vw);
+        width: min(1020px, 210vw);
         top: 36%;
-        opacity: 0.45;
+        opacity: 0.58;
     }
 }
 
