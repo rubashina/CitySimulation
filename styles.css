@@ -169,6 +169,29 @@ body::after {
     mix-blend-mode: multiply;
 }
 
+/* План города: SVG-сетка + градиент «heat map» поверх aurora */
+.bg-city-map {
+    position: fixed;
+    inset: -5%;
+    z-index: 0;
+    pointer-events: none;
+    background-image: url("assets/city-map-bg.svg");
+    background-repeat: no-repeat;
+    background-size: min(1280px, 125vw);
+    background-position: 58% 42%;
+    opacity: 0.34;
+    mix-blend-mode: multiply;
+    filter: saturate(1.2) contrast(1.05);
+}
+
+@media (max-width: 640px) {
+    .bg-city-map {
+        background-size: min(900px, 180vw);
+        background-position: 52% 38%;
+        opacity: 0.26;
+    }
+}
+
 /* --- Utility Classes --- */
 .hidden {
     display: none !important;
@@ -519,7 +542,7 @@ body::after {
     display: none;
     min-height: 100vh;
     position: relative;
-    z-index: 1;
+    z-index: 2;
 }
 
 .screen.active {
