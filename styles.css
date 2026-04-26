@@ -5,7 +5,8 @@
 
 /* --- CSS Variables — светлая «soft / bento» эстетика (реф. дашборд + health UI) --- */
 :root {
-    --bg-primary: #f6f5fa;
+    /* Чуть холоднее база — лучше читается неон mesh */
+    --bg-primary: #eef0f8;
     --bg-secondary: #ffffff;
     --bg-tertiary: #edeaf2;
     --bg-card: #ffffff;
@@ -21,10 +22,13 @@
     --pastel-green: #cfdeca;
     --pastel-yellow: #eff0a3;
     --pastel-pink: #f3d4dc;
-    --mesh-lavender: rgba(209, 196, 232, 0.92);
-    --mesh-peach: rgba(255, 204, 188, 0.85);
-    --mesh-mint: rgba(207, 222, 202, 0.88);
-    --mesh-periwinkle: rgba(184, 198, 232, 0.75);
+    /* Mesh «tech / aurora» — насыщеннее, читается на светлой базе */
+    --mesh-violet: rgba(124, 58, 237, 0.58);
+    --mesh-magenta: rgba(217, 70, 239, 0.5);
+    --mesh-cyan: rgba(6, 182, 212, 0.48);
+    --mesh-blue: rgba(59, 130, 246, 0.45);
+    --mesh-amber: rgba(251, 191, 36, 0.42);
+    --mesh-lime: rgba(163, 230, 53, 0.35);
     --login-cta-warm: #c85a47;
     --login-cta-warm-2: #e07856;
     --login-cta-cool-1: #8b7fd8;
@@ -95,7 +99,7 @@ body {
     position: relative;
 }
 
-/* Размытый mesh-градиент (реф: skincare / alena) — фиксированные пятна + blur */
+/* Размытый mesh — aurora / multi-brand: яркие пятна + blur (светлая техно) */
 body::before,
 body::after {
     content: "";
@@ -103,26 +107,27 @@ body::after {
     pointer-events: none;
     z-index: 0;
     border-radius: 50%;
-    filter: blur(78px);
+    filter: blur(64px);
     transform: translateZ(0);
+    mix-blend-mode: multiply;
 }
 
 body::before {
-    width: min(72vw, 560px);
-    height: min(72vw, 560px);
-    left: max(-18vw, -120px);
-    top: max(-12vh, -80px);
-    background: radial-gradient(circle at 38% 42%, var(--mesh-lavender) 0%, var(--mesh-pink) 38%, transparent 68%);
-    opacity: 0.72;
+    width: min(78vw, 620px);
+    height: min(78vw, 620px);
+    left: max(-20vw, -140px);
+    top: max(-14vh, -100px);
+    background: radial-gradient(circle at 35% 40%, var(--mesh-violet) 0%, var(--mesh-magenta) 36%, transparent 62%);
+    opacity: 0.88;
 }
 
 body::after {
-    width: min(88vw, 640px);
-    height: min(88vw, 640px);
-    right: max(-22vw, -140px);
-    bottom: max(-18vh, -100px);
-    background: radial-gradient(circle at 48% 48%, var(--mesh-peach) 0%, var(--mesh-periwinkle) 45%, transparent 70%);
-    opacity: 0.68;
+    width: min(92vw, 700px);
+    height: min(92vw, 700px);
+    right: max(-24vw, -160px);
+    bottom: max(-20vh, -120px);
+    background: radial-gradient(circle at 52% 48%, var(--mesh-cyan) 0%, var(--mesh-blue) 42%, transparent 65%);
+    opacity: 0.85;
 }
 
 #app {
@@ -136,15 +141,32 @@ body::after {
     position: fixed;
     pointer-events: none;
     z-index: 0;
-    width: min(62vw, 480px);
-    height: min(62vw, 480px);
-    left: 28%;
-    top: 42%;
+    width: min(68vw, 520px);
+    height: min(68vw, 520px);
+    left: 32%;
+    top: 38%;
     transform: translate(-50%, -50%);
     border-radius: 50%;
-    filter: blur(88px);
-    background: radial-gradient(circle at 50% 50%, var(--mesh-mint) 0%, rgba(239, 240, 163, 0.45) 52%, transparent 72%);
-    opacity: 0.55;
+    filter: blur(72px);
+    background: radial-gradient(circle at 45% 42%, var(--mesh-amber) 0%, var(--mesh-lime) 48%, transparent 68%);
+    opacity: 0.82;
+    mix-blend-mode: multiply;
+}
+
+#app::after {
+    content: "";
+    position: fixed;
+    pointer-events: none;
+    z-index: 0;
+    width: min(56vw, 420px);
+    height: min(56vw, 420px);
+    left: max(-8vw, -40px);
+    bottom: 8%;
+    border-radius: 50%;
+    filter: blur(70px);
+    background: radial-gradient(circle at 50% 50%, var(--mesh-magenta) 0%, var(--mesh-violet) 55%, transparent 72%);
+    opacity: 0.72;
+    mix-blend-mode: multiply;
 }
 
 /* --- Utility Classes --- */
@@ -704,15 +726,16 @@ h4 { font-size: 1rem; }
 #login-screen::before {
     content: "";
     position: absolute;
-    inset: -30%;
+    inset: -35%;
     z-index: 0;
     pointer-events: none;
     background:
-        radial-gradient(ellipse 55% 45% at 20% 15%, rgba(255, 218, 230, 0.55) 0%, transparent 55%),
-        radial-gradient(ellipse 50% 50% at 85% 20%, rgba(200, 220, 255, 0.45) 0%, transparent 50%),
-        radial-gradient(ellipse 60% 55% at 55% 95%, rgba(239, 240, 163, 0.35) 0%, transparent 55%);
-    filter: blur(56px);
-    opacity: 0.9;
+        radial-gradient(ellipse 58% 48% at 18% 12%, rgba(217, 70, 239, 0.38) 0%, rgba(124, 58, 237, 0.22) 45%, transparent 58%),
+        radial-gradient(ellipse 52% 52% at 88% 18%, rgba(6, 182, 212, 0.36) 0%, rgba(59, 130, 246, 0.2) 48%, transparent 56%),
+        radial-gradient(ellipse 62% 58% at 52% 92%, rgba(251, 191, 36, 0.32) 0%, rgba(163, 230, 53, 0.18) 50%, transparent 58%);
+    filter: blur(48px);
+    opacity: 1;
+    mix-blend-mode: multiply;
 }
 
 .login-container {
