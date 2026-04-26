@@ -3877,9 +3877,9 @@ function renderParticipantTeamsRadar() {
         const isMine = t.id === myTeamId;
         const isFar = far?.team?.id === t.id;
         const baseColor = String(t.color || '#3b82f6');
-        const border = isMine ? 'rgba(6, 214, 160, 0.95)' : (isFar ? 'rgba(239, 68, 68, 0.9)' : baseColor);
+        const border = isMine ? 'rgba(61, 92, 70, 0.95)' : (isFar ? 'rgba(239, 68, 68, 0.9)' : baseColor);
         const width = isMine ? 3 : (isFar ? 3 : 1.5);
-        const fill = isMine ? 'rgba(6, 214, 160, 0.08)' : (isFar ? 'rgba(239, 68, 68, 0.06)' : 'rgba(255,255,255,0.02)');
+        const fill = isMine ? 'rgba(61, 92, 70, 0.12)' : (isFar ? 'rgba(239, 68, 68, 0.08)' : 'rgba(33, 33, 33, 0.04)');
         return {
             label: t.name,
             data,
@@ -3963,9 +3963,9 @@ function renderParticipantTeamsRadar() {
                         min: 0,
                         max: 100,
                         ticks: { display: false },
-                        grid: { color: 'rgba(255,255,255,0.08)' },
-                        angleLines: { color: 'rgba(255,255,255,0.08)' },
-                        pointLabels: { color: 'rgba(243,244,246,0.85)', font: { size: 11 } }
+                        grid: { color: 'rgba(33,33,33,0.08)' },
+                        angleLines: { color: 'rgba(33,33,33,0.08)' },
+                        pointLabels: { color: 'rgba(33,33,33,0.72)', font: { size: 11, family: 'Urbanist' } }
                     }
                 }
             }
@@ -5512,15 +5512,15 @@ function initRadarChart() {
                     max: 100,
                     ticks: {
                         stepSize: 20,
-                        color: '#6b7280'
+                        color: '#8a8a8a'
                     },
                     grid: {
-                        color: '#374151'
+                        color: 'rgba(33,33,33,0.08)'
                     },
                     pointLabels: {
-                        color: '#9ca3af',
+                        color: '#5c5c5c',
                         font: {
-                            family: 'Unbounded',
+                            family: 'Urbanist',
                             size: 11
                         }
                     }
@@ -5530,9 +5530,9 @@ function initRadarChart() {
                 legend: {
                     position: 'bottom',
                     labels: {
-                        color: '#9ca3af',
+                        color: '#5c5c5c',
                         font: {
-                            family: 'Unbounded'
+                            family: 'Urbanist'
                         },
                         boxWidth: 12,
                         padding: 15
@@ -5560,22 +5560,22 @@ function initTimelineChart() {
             maintainAspectRatio: false,
             scales: {
                 x: {
-                    ticks: { color: '#6b7280' },
-                    grid: { color: '#374151' }
+                    ticks: { color: '#8a8a8a' },
+                    grid: { color: 'rgba(33,33,33,0.06)' }
                 },
                 y: {
                     beginAtZero: true,
                     max: 100,
-                    ticks: { color: '#6b7280' },
-                    grid: { color: '#374151' }
+                    ticks: { color: '#8a8a8a' },
+                    grid: { color: 'rgba(33,33,33,0.06)' }
                 }
             },
             plugins: {
                 legend: {
                     position: 'bottom',
                     labels: {
-                        color: '#9ca3af',
-                        font: { family: 'Unbounded' },
+                        color: '#5c5c5c',
+                        font: { family: 'Urbanist' },
                         boxWidth: 12,
                         padding: 15
                     }
@@ -5620,10 +5620,10 @@ function updateCharts() {
         datasets.push({
             label: `Консенсус (ИГС: ${avgIGS.total.toFixed(1)})`,
             data: CONFIG.parameterCategories.map(cat => avgIGS.components[cat.id]),
-            borderColor: '#ffffff',
-            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+            borderColor: '#212121',
+            backgroundColor: 'rgba(33, 33, 33, 0.06)',
             borderWidth: 3,
-            pointBackgroundColor: '#ffffff'
+            pointBackgroundColor: '#212121'
         });
     }
     
@@ -5654,7 +5654,7 @@ function updateCharts() {
         timelineDatasets.push({
             label: 'Консенсус ИГС',
             data: state.timelineData.map(d => d.consensusIGS || 50),
-            borderColor: '#ffffff',
+            borderColor: '#212121',
             borderWidth: 3,
             tension: 0.3,
             fill: false
