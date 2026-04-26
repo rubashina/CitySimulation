@@ -5,8 +5,8 @@
 
 /* --- CSS Variables — светлая «soft / bento» эстетика (реф. дашборд + health UI) --- */
 :root {
-    /* Чуть холоднее база — лучше читается неон mesh */
-    --bg-primary: #eef0f8;
+    /* Тёплая база под персиково-зелёный mesh */
+    --bg-primary: #f7f4ef;
     --bg-secondary: #ffffff;
     --bg-tertiary: #edeaf2;
     --bg-card: #ffffff;
@@ -22,13 +22,12 @@
     --pastel-green: #cfdeca;
     --pastel-yellow: #eff0a3;
     --pastel-pink: #f3d4dc;
-    /* Mesh «tech / aurora» — насыщеннее, читается на светлой базе */
-    --mesh-violet: rgba(124, 58, 237, 0.58);
-    --mesh-magenta: rgba(217, 70, 239, 0.5);
-    --mesh-cyan: rgba(6, 182, 212, 0.48);
-    --mesh-blue: rgba(59, 130, 246, 0.45);
-    --mesh-amber: rgba(251, 191, 36, 0.42);
-    --mesh-lime: rgba(163, 230, 53, 0.35);
+    /* Mesh — только персик / абрикот / шалфей / мята */
+    --mesh-peach: rgba(255, 198, 178, 0.62);
+    --mesh-apricot: rgba(255, 170, 150, 0.48);
+    --mesh-sage: rgba(168, 205, 172, 0.55);
+    --mesh-mint: rgba(198, 228, 200, 0.5);
+    --mesh-honey: rgba(240, 225, 175, 0.42);
     --login-cta-warm: #c85a47;
     --login-cta-warm-2: #e07856;
     --login-cta-cool-1: #8b7fd8;
@@ -99,7 +98,7 @@ body {
     position: relative;
 }
 
-/* Размытый mesh — aurora / multi-brand: яркие пятна + blur (светлая техно) */
+/* Размытый mesh — персик и зелень */
 body::before,
 body::after {
     content: "";
@@ -107,27 +106,27 @@ body::after {
     pointer-events: none;
     z-index: 0;
     border-radius: 50%;
-    filter: blur(64px);
+    filter: blur(72px);
     transform: translateZ(0);
     mix-blend-mode: multiply;
 }
 
 body::before {
-    width: min(78vw, 620px);
-    height: min(78vw, 620px);
-    left: max(-20vw, -140px);
-    top: max(-14vh, -100px);
-    background: radial-gradient(circle at 35% 40%, var(--mesh-violet) 0%, var(--mesh-magenta) 36%, transparent 62%);
-    opacity: 0.88;
+    width: min(82vw, 640px);
+    height: min(82vw, 640px);
+    left: max(-18vw, -120px);
+    top: max(-12vh, -80px);
+    background: radial-gradient(circle at 38% 42%, var(--mesh-peach) 0%, var(--mesh-apricot) 40%, transparent 66%);
+    opacity: 0.75;
 }
 
 body::after {
-    width: min(92vw, 700px);
-    height: min(92vw, 700px);
-    right: max(-24vw, -160px);
-    bottom: max(-20vh, -120px);
-    background: radial-gradient(circle at 52% 48%, var(--mesh-cyan) 0%, var(--mesh-blue) 42%, transparent 65%);
-    opacity: 0.85;
+    width: min(90vw, 680px);
+    height: min(90vw, 680px);
+    right: max(-22vw, -140px);
+    bottom: max(-18vh, -100px);
+    background: radial-gradient(circle at 48% 52%, var(--mesh-sage) 0%, var(--mesh-mint) 45%, transparent 68%);
+    opacity: 0.72;
 }
 
 #app {
@@ -141,15 +140,15 @@ body::after {
     position: fixed;
     pointer-events: none;
     z-index: 0;
-    width: min(68vw, 520px);
-    height: min(68vw, 520px);
-    left: 32%;
-    top: 38%;
+    width: min(70vw, 540px);
+    height: min(70vw, 540px);
+    left: 30%;
+    top: 40%;
     transform: translate(-50%, -50%);
     border-radius: 50%;
-    filter: blur(72px);
-    background: radial-gradient(circle at 45% 42%, var(--mesh-amber) 0%, var(--mesh-lime) 48%, transparent 68%);
-    opacity: 0.82;
+    filter: blur(80px);
+    background: radial-gradient(circle at 50% 48%, var(--mesh-honey) 0%, var(--mesh-mint) 50%, transparent 70%);
+    opacity: 0.65;
     mix-blend-mode: multiply;
 }
 
@@ -158,45 +157,15 @@ body::after {
     position: fixed;
     pointer-events: none;
     z-index: 0;
-    width: min(56vw, 420px);
-    height: min(56vw, 420px);
-    left: max(-8vw, -40px);
-    bottom: 8%;
+    width: min(58vw, 440px);
+    height: min(58vw, 440px);
+    left: max(-6vw, -36px);
+    bottom: 6%;
     border-radius: 50%;
-    filter: blur(70px);
-    background: radial-gradient(circle at 50% 50%, var(--mesh-magenta) 0%, var(--mesh-violet) 55%, transparent 72%);
-    opacity: 0.72;
+    filter: blur(76px);
+    background: radial-gradient(circle at 45% 55%, var(--mesh-apricot) 0%, var(--mesh-sage) 52%, transparent 72%);
+    opacity: 0.58;
     mix-blend-mode: multiply;
-}
-
-/* План города: inline SVG в разметке (без отдельного URL — работает везде) */
-.bg-city-map {
-    position: fixed;
-    inset: -6%;
-    z-index: 1;
-    pointer-events: none;
-    overflow: visible;
-}
-
-.bg-city-map svg {
-    position: absolute;
-    left: 50%;
-    top: 42%;
-    width: min(1400px, 140vw);
-    height: auto;
-    min-height: 108vmin;
-    transform: translate(-50%, -50%) rotate(-2.5deg);
-    opacity: 0.72;
-    mix-blend-mode: multiply;
-    filter: contrast(1.08) saturate(1.12);
-}
-
-@media (max-width: 640px) {
-    .bg-city-map svg {
-        width: min(1020px, 210vw);
-        top: 36%;
-        opacity: 0.58;
-    }
 }
 
 /* --- Utility Classes --- */
@@ -549,7 +518,7 @@ body::after {
     display: none;
     min-height: 100vh;
     position: relative;
-    z-index: 2;
+    z-index: 1;
 }
 
 .screen.active {
@@ -760,11 +729,11 @@ h4 { font-size: 1rem; }
     z-index: 0;
     pointer-events: none;
     background:
-        radial-gradient(ellipse 58% 48% at 18% 12%, rgba(217, 70, 239, 0.38) 0%, rgba(124, 58, 237, 0.22) 45%, transparent 58%),
-        radial-gradient(ellipse 52% 52% at 88% 18%, rgba(6, 182, 212, 0.36) 0%, rgba(59, 130, 246, 0.2) 48%, transparent 56%),
-        radial-gradient(ellipse 62% 58% at 52% 92%, rgba(251, 191, 36, 0.32) 0%, rgba(163, 230, 53, 0.18) 50%, transparent 58%);
-    filter: blur(48px);
-    opacity: 1;
+        radial-gradient(ellipse 58% 48% at 18% 12%, rgba(255, 195, 175, 0.5) 0%, rgba(255, 165, 145, 0.22) 48%, transparent 58%),
+        radial-gradient(ellipse 52% 52% at 88% 18%, rgba(175, 210, 178, 0.42) 0%, rgba(195, 225, 198, 0.22) 50%, transparent 56%),
+        radial-gradient(ellipse 62% 58% at 52% 92%, rgba(238, 220, 165, 0.35) 0%, rgba(170, 205, 175, 0.2) 52%, transparent 58%);
+    filter: blur(52px);
+    opacity: 0.95;
     mix-blend-mode: multiply;
 }
 
