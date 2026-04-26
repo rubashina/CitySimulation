@@ -3211,10 +3211,9 @@ function renderParameters() {
     // Аккордеон по категориям
     if (!state.ui || typeof state.ui !== 'object') state.ui = {};
     if (!state.ui.accordionOpen || typeof state.ui.accordionOpen !== 'object') state.ui.accordionOpen = {};
-    // Если ничего не открыто (первый рендер / чистый UI) — раскрываем всё,
-    // чтобы блок "Параметры проекта" не выглядел пустым.
+    // Первый рендер / чистый UI: аккордеоны категорий по умолчанию свёрнуты.
     if (Object.keys(state.ui.accordionOpen).length === 0) {
-        CONFIG.parameterCategories.forEach(cat => { state.ui.accordionOpen[cat.id] = true; });
+        CONFIG.parameterCategories.forEach(cat => { state.ui.accordionOpen[cat.id] = false; });
     }
     
     // Каждый участник меняет ЛИЧНЫЙ черновик (локально)
