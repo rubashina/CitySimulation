@@ -3102,6 +3102,10 @@ async function createSession(sessionName, moderatorName, customCode = '', projec
 // =====================================================
 
 function initParticipantScreen() {
+    if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+    // При каждом входе на экран участника — категории по умолчанию свёрнуты (без наследия из прошлой сессии во вкладке).
+    state.ui.accordionOpen = Object.fromEntries(CONFIG.parameterCategories.map(c => [c.id, false]));
+
     updateParticipantHeader();
     renderRoleCard();
     // Восстановим черновик (если пользователь обновил страницу/случайно вышел)
@@ -3110,7 +3114,6 @@ function initParticipantScreen() {
     renderCaptainMatrix();
     renderParticipantInsights();
     // Инициализация обработчиков должна быть идемпотентной (re-join не должен удваивать клики)
-    if (!state.ui || typeof state.ui !== 'object') state.ui = {};
     if (!state.ui.participantHandlersBound) {
         state.ui.participantHandlersBound = true;
         initHistoryPanel();
@@ -3203,6 +3206,18 @@ function updateParticipantHeader() {
     $('#p-user-name').textContent = state.user.name;
 }
 
+/** Состояние тела аккордеона: `display: contents` конфликтует с `[hidden]` в части браузеров — задаём явно. */
+function setParamAccordionSectionOpen(body, headerBtn, open) {
+    headerBtn.setAttribute('aria-expanded', String(open));
+    if (open) {
+        body.removeAttribute('hidden');
+        body.style.display = 'contents';
+    } else {
+        body.setAttribute('hidden', '');
+        body.style.display = 'none';
+    }
+}
+
 function renderParameters() {
     const grid = $('#parameters-grid');
     if (!grid) return;
@@ -3211,9 +3226,14 @@ function renderParameters() {
     // Аккордеон по категориям
     if (!state.ui || typeof state.ui !== 'object') state.ui = {};
     if (!state.ui.accordionOpen || typeof state.ui.accordionOpen !== 'object') state.ui.accordionOpen = {};
-    // Первый рендер / чистый UI: аккордеоны категорий по умолчанию свёрнуты.
+    // Только явный true = раскрыто (устаревшие truthy из стора/багов не открывают секцию).
     if (Object.keys(state.ui.accordionOpen).length === 0) {
         CONFIG.parameterCategories.forEach(cat => { state.ui.accordionOpen[cat.id] = false; });
+    } else {
+        CONFIG.parameterCategories.forEach(cat => {
+            const v = state.ui.accordionOpen[cat.id];
+            if (v !== true && v !== false) state.ui.accordionOpen[cat.id] = false;
+        });
     }
     
     // Каждый участник меняет ЛИЧНЫЙ черновик (локально)
@@ -3235,13 +3255,12 @@ function renderParameters() {
     
     // Рендерим параметры по категориям
     CONFIG.parameterCategories.forEach(category => {
-        const isOpen = !!state.ui.accordionOpen[category.id];
+        const isOpen = state.ui.accordionOpen[category.id] === true;
 
         // Заголовок категории (кликабельный)
         const headerBtn = document.createElement('button');
         headerBtn.type = 'button';
         headerBtn.className = 'param-accordion-header';
-        headerBtn.setAttribute('aria-expanded', String(isOpen));
         headerBtn.setAttribute('aria-controls', `acc-body-${category.id}`);
         headerBtn.innerHTML = `
             <span class="category-icon" data-tooltip="${category.name}">${category.icon}</span>
@@ -3257,16 +3276,13 @@ function renderParameters() {
         const body = document.createElement('div');
         body.className = 'param-accordion-body';
         body.id = `acc-body-${category.id}`;
-        body.hidden = !isOpen;
-        // Чтобы карточки встраивались в общий grid (outer grid), а оболочка не ломала сетку
-        body.style.display = 'contents';
         grid.appendChild(body);
+        setParamAccordionSectionOpen(body, headerBtn, isOpen);
 
         headerBtn.addEventListener('click', () => {
-            const next = !state.ui.accordionOpen[category.id];
+            const next = !(state.ui.accordionOpen[category.id] === true);
             state.ui.accordionOpen[category.id] = next;
-            headerBtn.setAttribute('aria-expanded', String(next));
-            body.hidden = !next;
+            setParamAccordionSectionOpen(body, headerBtn, next);
         });
         
         // Параметры категории
